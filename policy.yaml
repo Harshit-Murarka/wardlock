@@ -1,0 +1,11 @@
+# Wardlock policy (see docs/SPEC.md §5). Changes here are recorded with every decision.
+version: 1
+auto_approve_limit: "50.00"
+max_refunds_per_session: 2
+goodwill_percentages: [10, 25]
+reason_allows:
+  DAMAGED:       [LINE_ITEM, GOODWILL_PCT]
+  WRONG_ITEM:    [LINE_ITEM, SHIPPING]
+  NOT_RECEIVED:  [FULL_REMAINING]
+  LATE_DELIVERY: [SHIPPING, GOODWILL_PCT]
+  GOODWILL:      [GOODWILL_PCT]
