@@ -1,5 +1,9 @@
-# Wardlock — Technical Spec (narrowed scope) · v1.1 · Oct 5, 2026
+# Wardlock — Technical Spec (narrowed scope) · v1.2 · Oct 6, 2026
 
+> v1.2 changes:
+> - §6: 409 and 429 are retried, never BLOCKed. 401/403 and unreadable 2xx responses → HOLD. Adds the error-to-verdict table.
+> - §7: PayPal facts checked against PayPal's OpenAPI spec (field limits, 200 on replay, refund statuses, zero-decimal currencies).
+>
 > v1.1 changes:
 > - §3.1/§4: one goodwill handle per policy percentage.
 > - §5: limits live only in `policy.yaml`.
@@ -172,10 +176,17 @@ reason_allows:
     "note_to_payer": "<note>", "custom_id": "<decision_id>"}
    ```
 3. 2xx → write `ledger` row (store PayPal refund id), consume handles, return ALLOWED.
-4. Timeout / 5xx → retry up to 3 times with backoff using the **same** `PayPal-Request-Id`; still failing → HOLD with `DEPENDENCY_UNAVAILABLE` (frozen request kept; approving later reuses the same key, so it cannot double-refund).
-5. 4xx → BLOCK, store PayPal's error `name`, release handles.
-6. On HOLD: `holds` row with the frozen request (`capture_id`, `amount`, `currency`, `idempotency_key`, `note`); handles RESERVED.
-7. Approve (admin) → execute the frozen request exactly. Deny or timeout (`HOLD_TIMEOUT_MINUTES`) → release handles, mark hold.
+4. Timeout, network error, 5xx, **409** (a previous call is still in progress) or **429** → retry up to 3 times with backoff (0.5 s, 1 s, 2 s) using the **same** `PayPal-Request-Id`. If it is still failing → HOLD with `DEPENDENCY_UNAVAILABLE`. The frozen request is kept, and approving it later reuses the same key, so it cannot double-refund. A 2xx with an unreadable body also → HOLD, because the outcome is unknown.
+5. **401/403** → HOLD `DEPENDENCY_UNAVAILABLE`. These mean Wardlock's credentials or permissions are wrong, not the request, and PayPal processed nothing. On a 401 the client first refreshes the token once.
+6. Other 4xx (400, 404, 422, …) → BLOCK, store PayPal's error `name` and `details[].issue` codes, release handles. **409 must never land here:** releasing handles while PayPal is still processing would let the agent request the same refund again under a new key.
+
+| Client raises (`wardlock/paypal/errors.py`) | Executor verdict |
+|---|---|
+| `PayPalUnavailable` (retries exhausted, or outcome unknown) | HOLD `DEPENDENCY_UNAVAILABLE` |
+| `PayPalAuthError` (401/403 or token failure) | HOLD `DEPENDENCY_UNAVAILABLE` |
+| `PayPalRequestError` (other 4xx) | BLOCK |
+7. On HOLD: `holds` row with the frozen request (`capture_id`, `amount`, `currency`, `idempotency_key`, `note`); handles RESERVED.
+8. Approve (admin) → execute the frozen request exactly. Deny or timeout (`HOLD_TIMEOUT_MINUTES`) → release handles, mark hold.
 
 ## 7. PayPal API usage (sandbox base `https://api-m.sandbox.paypal.com`)
 
@@ -192,7 +203,12 @@ Facts the code must respect:
 - An **empty refund body means a full refund** → always send `amount`.
 - Amount must be positive and in the capture's currency; partial refunds may add up to the captured total.
 - Refunds are allowed only within **180 days** of capture (`REFUND_NOT_ALLOWED_AFTER_180_DAYS`).
-- `PayPal-Request-Id` makes POSTs idempotent.
+- `PayPal-Request-Id` makes POSTs idempotent. Re-sending a used id returns the latest state of the original request: the refund endpoint answers **200** with the existing refund instead of **201**. How long PayPal keeps refund request ids is not documented **[VERIFY]**.
+- Field limits (OpenAPI spec): `note_to_payer` ≤ 255 characters, `custom_id` ≤ 127 characters, `currency_code` exactly 3 characters.
+- Zero-decimal currencies: HUF, JPY and TWD (no decimal places). Every other supported currency has 2.
+- Refund `status`: `COMPLETED | PENDING | FAILED | CANCELLED`. P5 must decide what a 2xx with a non-`COMPLETED` status means for the ledger.
+- Error body: `{name, message, debug_id, details:[{issue, description, field}]}`. Refund issues include `REFUND_AMOUNT_EXCEEDED`, `CAPTURE_FULLY_REFUNDED` and `REFUND_NOT_ALLOWED_AFTER_180_DAYS`.
+- PayPal documents 409, 429, 5xx and network timeouts as safe to retry with the same `PayPal-Request-Id`.
 
 **Seeding (scripts/seed_sandbox.py):** create orders with `intent: CAPTURE` and `purchase_units[0]` containing `items[]` and `amount.breakdown` (`item_total`, `shipping`) **[VERIFY schema]**; print approval links; you approve each one with a sandbox *personal* account in the browser; script then captures and writes `orders` rows with `customer_id`, `order_ref`, `paypal_order_id`, `capture_id`, items, shipping, currency, captured amount, captured_at.
 
