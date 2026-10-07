@@ -2,7 +2,7 @@ from decimal import Decimal
 
 import pytest
 
-from wardlock.money import currency_exponent, to_paypal_value
+from wardlock.money import currency_exponent, from_minor, to_minor, to_paypal_value
 
 
 @pytest.mark.parametrize(
@@ -58,3 +58,48 @@ def test_currency_exponent():
     assert currency_exponent("TWD") == 0
     with pytest.raises(ValueError):
         currency_exponent("ABC")
+
+
+@pytest.mark.parametrize(
+    ("amount", "currency", "minor"),
+    [
+        (Decimal("4.50"), "USD", 450),
+        (Decimal("4.5"), "USD", 450),
+        (Decimal("0"), "USD", 0),  # free shipping is allowed here
+        (Decimal("0.01"), "USD", 1),
+        (Decimal("1E+2"), "USD", 10000),
+        (Decimal("500"), "JPY", 500),
+    ],
+)
+def test_to_minor_is_exact(amount, currency, minor):
+    assert to_minor(amount, currency) == minor
+    assert isinstance(to_minor(amount, currency), int)
+
+
+@pytest.mark.parametrize(
+    ("amount", "currency"),
+    [
+        (4.5, "USD"),
+        (450, "USD"),
+        (Decimal("-0.01"), "USD"),
+        (Decimal("0.001"), "USD"),
+        (Decimal("1.5"), "JPY"),
+        (Decimal("NaN"), "USD"),
+        (Decimal("1E+15"), "USD"),  # beyond any real amount; keeps Decimal math exact
+        (Decimal("1"), "XYZ"),
+    ],
+)
+def test_to_minor_rejects_instead_of_rounding(amount, currency):
+    with pytest.raises(ValueError):
+        to_minor(amount, currency)
+
+
+def test_from_minor_round_trips():
+    assert from_minor(450, "USD") == Decimal("4.50")
+    assert str(from_minor(450, "USD")) == "4.50"
+    assert from_minor(500, "JPY") == Decimal("500")
+    assert to_minor(from_minor(5997, "USD"), "USD") == 5997
+    with pytest.raises(ValueError):
+        from_minor(True, "USD")
+    with pytest.raises(ValueError):
+        from_minor(4.5, "USD")

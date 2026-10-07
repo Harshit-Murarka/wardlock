@@ -123,6 +123,11 @@ class PayPalClient:
             **kwargs,
         )
 
+    @property
+    def base_url(self) -> str:
+        """The PayPal API base URL this client talks to (already passed the sandbox guard)."""
+        return self._base_url
+
     def __repr__(self) -> str:
         # Deliberately excludes the client id, secret and token.
         return f"PayPalClient(base_url={self._base_url!r})"
@@ -193,6 +198,32 @@ class PayPalClient:
             )
         logger.info("PayPal refund %s status=%s request_id=%s", refund.id, refund.status, request_id)
         return refund
+
+    # ---------------------------------------------------------------- seeding only
+
+    async def create_order(self, body: dict[str, Any], request_id: str) -> dict[str, Any]:
+        """Create a checkout order. Only sandbox seeding (wardlock/seed.py) uses this;
+        nothing on the agent's path ever creates orders."""
+        if not isinstance(body, dict) or body.get("intent") != "CAPTURE":
+            raise ValueError("create_order only supports intent CAPTURE")
+        _check_request_id(request_id)
+        # PayPal keeps create-order request ids for 6 hours (OpenAPI spec). The id is
+        # mandatory when the body carries a card, because then this one call takes the payment.
+        headers = {"PayPal-Request-Id": request_id}
+        return await self._request(
+            "POST", "/v2/checkout/orders", json=body, headers=headers, request_id=request_id
+        )
+
+    async def capture_order(self, order_id: str, request_id: str) -> dict[str, Any]:
+        """Capture an approved order.
+
+        A timeout can still have captured the money, so retries reuse request_id. PayPal
+        then returns the original result instead of capturing twice.
+        """
+        path = f"/v2/checkout/orders/{_check_id(order_id, 'order_id')}/capture"
+        _check_request_id(request_id)
+        headers = {"PayPal-Request-Id": request_id, "Prefer": "return=representation"}
+        return await self._request("POST", path, json={}, headers=headers, request_id=request_id)
 
     # ---------------------------------------------------------------- plumbing
 

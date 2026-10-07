@@ -1,0 +1,95 @@
+[
+  {
+    "order_ref": "A-1001", "customer_id": "cust_ana", "placed_at": "2026-09-20", "status": "DELIVERED",
+    "currency": "USD", "shipping": "6.50",
+    "items": [
+      {"item_ref": "bell", "name": "Bike bell", "unit_amount": "4.00", "quantity": 1},
+      {"item_ref": "cage", "name": "Bottle cage", "unit_amount": "7.99", "quantity": 2}
+    ]
+  },
+  {
+    "order_ref": "A-1002", "customer_id": "cust_ana", "placed_at": "2026-10-01", "status": "SHIPPED",
+    "currency": "USD", "shipping": "10.00",
+    "items": [
+      {"item_ref": "helmet", "name": "Commuter helmet", "unit_amount": "179.00", "quantity": 1}
+    ]
+  },
+  {
+    "order_ref": "A-1003", "customer_id": "cust_ana", "placed_at": "2026-08-15", "status": "DELIVERED",
+    "currency": "USD", "shipping": "5.00",
+    "items": [
+      {"item_ref": "pump", "name": "Floor pump", "unit_amount": "24.99", "quantity": 1}
+    ]
+  },
+  {
+    "order_ref": "B-2001", "customer_id": "cust_ben", "placed_at": "2026-09-12", "status": "DELIVERED",
+    "currency": "USD", "shipping": "10.00",
+    "items": [
+      {"item_ref": "seatpost", "name": "Carbon seatpost", "unit_amount": "179.00", "quantity": 1}
+    ]
+  },
+  {
+    "order_ref": "B-2002", "customer_id": "cust_ben", "placed_at": "2026-09-25", "status": "DELIVERED",
+    "currency": "USD", "shipping": "4.50",
+    "items": [
+      {"item_ref": "bottle", "name": "Water bottle", "unit_amount": "9.99", "quantity": 3}
+    ]
+  },
+  {
+    "order_ref": "B-2003", "customer_id": "cust_ben", "placed_at": "2026-10-02", "status": "DELIVERED",
+    "currency": "USD", "shipping": "0.00",
+    "items": [
+      {"item_ref": "lube", "name": "Chain lube", "unit_amount": "12.50", "quantity": 1}
+    ]
+  },
+  {
+    "order_ref": "C-3001", "customer_id": "cust_chen", "placed_at": "2026-09-18", "status": "DELIVERED",
+    "currency": "USD", "shipping": "6.00",
+    "items": [
+      {"item_ref": "lights", "name": "LED light set", "unit_amount": "34.00", "quantity": 1},
+      {"item_ref": "vest", "name": "Reflective vest", "unit_amount": "19.99", "quantity": 1}
+    ]
+  },
+  {
+    "order_ref": "C-3002", "customer_id": "cust_chen", "placed_at": "2026-09-28", "status": "DELIVERED",
+    "currency": "USD", "shipping": "0.00",
+    "items": [
+      {"item_ref": "gloves", "name": "Cycling gloves", "unit_amount": "19.99", "quantity": 3}
+    ]
+  },
+  {
+    "order_ref": "C-3003", "customer_id": "cust_chen", "placed_at": "2026-10-03", "status": "PROCESSING",
+    "currency": "USD", "shipping": "3.00",
+    "items": [
+      {"item_ref": "mount", "name": "Phone mount", "unit_amount": "15.00", "quantity": 1}
+    ]
+  },
+  {
+    "order_ref": "D-4001", "customer_id": "cust_dia", "placed_at": "2026-09-08", "status": "DELIVERED",
+    "currency": "USD", "shipping": "8.00",
+    "items": [
+      {"item_ref": "jacket", "name": "Rain jacket", "unit_amount": "89.00", "quantity": 1}
+    ]
+  },
+  {
+    "order_ref": "D-4002", "customer_id": "cust_dia", "placed_at": "2026-09-30", "status": "SHIPPED",
+    "currency": "USD", "shipping": "5.50",
+    "items": [
+      {"item_ref": "kickstand", "name": "Kickstand", "unit_amount": "22.00", "quantity": 1}
+    ]
+  },
+  {
+    "order_ref": "D-4003", "customer_id": "cust_dia", "placed_at": "2026-10-04", "status": "DELIVERED",
+    "currency": "USD", "shipping": "6.00",
+    "items": [
+      {"item_ref": "lock", "name": "U-lock", "unit_amount": "45.00", "quantity": 1}
+    ]
+  },
+  {
+    "order_ref": "Z-9001", "customer_id": "cust_qa", "placed_at": "2026-10-07", "status": "DELIVERED",
+    "currency": "USD", "shipping": "0.00",
+    "items": [
+      {"item_ref": "widget", "name": "Smoke-test widget (not for demos)", "unit_amount": "10.00", "quantity": 1}
+    ]
+  }
+]

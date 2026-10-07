@@ -1,0 +1,7 @@
+[
+  {"id": "cust_ana",  "first_name": "Ana",  "email": "ana@example.com"},
+  {"id": "cust_ben",  "first_name": "Ben",  "email": "ben@example.com"},
+  {"id": "cust_chen", "first_name": "Chen", "email": "chen@example.com"},
+  {"id": "cust_dia",  "first_name": "Dia",  "email": "dia@example.com"},
+  {"id": "cust_qa",   "first_name": "QA",   "email": "qa@example.com"}
+]

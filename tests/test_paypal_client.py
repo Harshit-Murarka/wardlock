@@ -435,3 +435,46 @@ async def test_get_order_returns_raw_json(paypal, make_client):
     paypal.get("/v2/checkout/orders/5O190127TN364715T").respond(200, json={"id": "5O190127TN364715T"})
     async with make_client() as client:
         assert await client.get_order("5O190127TN364715T") == {"id": "5O190127TN364715T"}
+
+
+# ------------------------------------------------------------ seeding-only calls
+
+
+async def test_create_order_sends_body_and_request_id(paypal, make_client):
+    route = paypal.post("/v2/checkout/orders").respond(201, json={"id": "5O190127TN364715T"})
+    body = {"intent": "CAPTURE", "purchase_units": [{"amount": {"currency_code": "USD", "value": "1.00"}}]}
+    async with make_client() as client:
+        result = await client.create_order(body, "seed-A-1001-abcd1234-1")
+
+    assert result == {"id": "5O190127TN364715T"}
+    request = route.calls[0].request
+    assert json.loads(request.content) == body
+    assert request.headers["PayPal-Request-Id"] == "seed-A-1001-abcd1234-1"
+
+
+@pytest.mark.parametrize("body", [{"intent": "AUTHORIZE"}, {}, None])
+async def test_create_order_only_allows_capture_intent(paypal, make_client, body):
+    async with make_client() as client:
+        with pytest.raises(ValueError):
+            await client.create_order(body, "seed-x")
+    assert paypal.calls.call_count == 0
+
+
+async def test_capture_order_sends_empty_json_and_headers(paypal, make_client):
+    route = paypal.post("/v2/checkout/orders/5O190127TN364715T/capture").respond(201, json={"id": "X"})
+    async with make_client() as client:
+        await client.capture_order("5O190127TN364715T", "seed-capture-5O190127TN364715T")
+
+    request = route.calls[0].request
+    assert request.content == b"{}"
+    assert request.headers["PayPal-Request-Id"] == "seed-capture-5O190127TN364715T"
+    assert request.headers["Prefer"] == "return=representation"
+
+
+async def test_capture_order_validates_ids_before_calling(paypal, make_client):
+    async with make_client() as client:
+        with pytest.raises(ValueError):
+            await client.capture_order("../refund", "seed-x")
+        with pytest.raises(ValueError):
+            await client.capture_order("5O190127TN364715T", "")
+    assert paypal.calls.call_count == 0

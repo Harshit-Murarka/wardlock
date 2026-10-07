@@ -1,5 +1,9 @@
-# Wardlock — Technical Spec (narrowed scope) · v1.2 · Oct 6, 2026
+# Wardlock — Technical Spec (narrowed scope) · v1.3 · Oct 7, 2026
 
+> v1.3 changes:
+> - §7: seeding details checked against the Orders v2 OpenAPI spec. Seeding is resumable with a state file, and has `--restore-db`. It pays with a sandbox test card by default (single-step create, no approvals), with browser approval as a fallback.
+> - §9: as built, adding `orders.status`/`placed_at`, `decisions.capture_id`, `holds.created_at` and `handles.label`/`goodwill_pct`.
+>
 > v1.2 changes:
 > - §6: 409 and 429 are retried, never BLOCKed. 401/403 and unreadable 2xx responses → HOLD. Adds the error-to-verdict table.
 > - §7: PayPal facts checked against PayPal's OpenAPI spec (field limits, 200 on replay, refund statuses, zero-decimal currencies).
@@ -203,14 +207,36 @@ Facts the code must respect:
 - An **empty refund body means a full refund** → always send `amount`.
 - Amount must be positive and in the capture's currency; partial refunds may add up to the captured total.
 - Refunds are allowed only within **180 days** of capture (`REFUND_NOT_ALLOWED_AFTER_180_DAYS`).
-- `PayPal-Request-Id` makes POSTs idempotent. Re-sending a used id returns the latest state of the original request: the refund endpoint answers **200** with the existing refund instead of **201**. How long PayPal keeps refund request ids is not documented **[VERIFY]**.
+- `PayPal-Request-Id` makes POSTs idempotent. Re-sending a used id returns the latest state of the original request: the refund endpoint answers **200** with the existing refund instead of **201**. **Confirmed live in the sandbox on Oct 7, 2026:** re-sending a refund's request id returned `200 OK` with the same refund id, and no second refund was made. How long PayPal keeps refund request ids is not documented **[VERIFY]**; minutes later still worked.
 - Field limits (OpenAPI spec): `note_to_payer` ≤ 255 characters, `custom_id` ≤ 127 characters, `currency_code` exactly 3 characters.
 - Zero-decimal currencies: HUF, JPY and TWD (no decimal places). Every other supported currency has 2.
 - Refund `status`: `COMPLETED | PENDING | FAILED | CANCELLED`. P5 must decide what a 2xx with a non-`COMPLETED` status means for the ledger.
 - Error body: `{name, message, debug_id, details:[{issue, description, field}]}`. Refund issues include `REFUND_AMOUNT_EXCEEDED`, `CAPTURE_FULLY_REFUNDED` and `REFUND_NOT_ALLOWED_AFTER_180_DAYS`.
 - PayPal documents 409, 429, 5xx and network timeouts as safe to retry with the same `PayPal-Request-Id`.
 
-**Seeding (scripts/seed_sandbox.py):** create orders with `intent: CAPTURE` and `purchase_units[0]` containing `items[]` and `amount.breakdown` (`item_total`, `shipping`) **[VERIFY schema]**; print approval links; you approve each one with a sandbox *personal* account in the browser; script then captures and writes `orders` rows with `customer_id`, `order_ref`, `paypal_order_id`, `capture_id`, items, shipping, currency, captured amount, captured_at.
+**Seeding (`scripts/seed_sandbox.py`, logic in `wardlock/seed.py`):**
+- **Input:** `seed/customers.json` and `seed/orders.json`. Amounts are strings, read as `Decimal`. Totals are always computed, never typed in. Emails must be `@example.com`.
+- **Create:** create each order with `intent: CAPTURE`. `purchase_units[0]` carries:
+  - `reference_id`;
+  - `items[]`, where `quantity` is a **string**;
+  - `amount.breakdown` with `item_total`, plus `shipping` when it is above 0;
+  - `payment_source.paypal.experience_context` with `NO_SHIPPING`, `PAY_NOW`, `return_url` and `cancel_url`.
+
+  This was checked against PayPal's OpenAPI spec. The approval link's `rel` is `payer-action`.
+- **Payment, default (card mode):** each order is paid with one of PayPal's **published sandbox test cards** (`payment_source.card`). In this "single-step" create, the create call itself takes the payment and returns `COMPLETED` with the capture, so there's no browser and no approval.
+  - `PayPal-Request-Id` is mandatory here, and PayPal keeps it for 6 hours (OpenAPI spec), so a retried or re-run create can't charge twice.
+  - The card is only ever sent when the client points at the sandbox.
+  - A card that needs 3D Secure (`PAYER_ACTION_REQUIRED`) is reported, and the next run creates a fresh order, e.g. with another card via `--card-number` from the dashboard's card generator.
+- **Payment, fallback (`--approve-in-browser`):** print approval links, and you approve each one as a sandbox *personal* account.
+- **Capture checks, both modes:** the script reads each order's `status` before capturing. `COMPLETED` was confirmed live on Oct 7, 2026 (13 card-paid orders). The other status values are still **[VERIFY]**. `APPROVED` → capture; `COMPLETED` → read the existing capture. A capture is recorded only if its status is `COMPLETED` **and** its amount and currency equal the seed total. A 202 or `PENDING` is retried on the next run.
+- **`--only REF`** seeds a subset (e.g. `--only Z-9001` as a $10 first check).
+- **The sandbox accounts must be US accounts.** PayPal creates sandbox accounts in the developer's own country by default. Indian accounts can't receive these USD payments ("This seller doesn't accept payments in your currency"). Use a US Business account and the REST app linked to it.
+- **Resumable:** progress is saved to `seed/sandbox_state.json` (gitignored) after every step.
+  - Create request IDs are `seed-{ref}-{contenthash}-{attempt}`, and capture request IDs are `seed-capture-{order id}`.
+  - Re-running never duplicates an order or a row.
+  - `--restore-db` rebuilds rows from the state file with no PayPal calls. It's the recovery path after a schema change, since there are no migrations.
+  - Editing an order after it was captured is refused.
+- **Smoke-test refunds:** use order `Z-9001` only. Refunds made outside Wardlock are not in the ledger, so they would distort `FULL_REMAINING` for demo orders.
 
 ## 8. Webhooks and reconciliation
 
@@ -226,17 +252,21 @@ Facts the code must respect:
 
 ## 9. Data model
 
+Implemented in `wardlock/models.py`. Money is integer minor units. Timestamps are timezone-aware UTC. IDs are prefixed random strings (`ord_`, `ses_`, `dec_`, `hold_`, `rf_`, `alr_`; handles `h_`). Enum columns have database CHECK constraints, and SQLite runs with `PRAGMA foreign_keys=ON`.
+
 | Table | Columns |
 |---|---|
-| `customers` | `id`, `first_name`, `email` |
-| `orders` | `id`, `customer_id`, `order_ref`, `paypal_order_id`, `capture_id`, `currency`, `captured_minor`, `items_json`, `shipping_minor`, `captured_at` |
-| `sessions` | `id`, `ticket_id`, `customer_id`, `ticket_body` (untrusted), `token_hash`, `created_at`, `expires_at`, `status` |
-| `handles` | see §4 |
-| `decisions` | `id`, `session_id`, `tool`, `request_json`, `verdict`, `reason_codes`, `amount_minor`, `currency`, `idempotency_key`, `policy_version`, `latency_ms`, `created_at` |
-| `holds` | `id`, `decision_id`, `frozen_request_json`, `status`, `approver`, `decided_at` |
-| `ledger` | `id`, `decision_id`, `capture_id`, `paypal_refund_id` (unique), `amount_minor`, `currency`, `status`, `created_at` |
-| `webhook_events` | `event_id` (unique), `event_type`, `resource_id`, `verified`, `payload_json`, `received_at` |
+| `customers` | `id`, `first_name`, `email` (unique) |
+| `orders` | `id`, `customer_id`, `order_ref` (unique), `status` (`PROCESSING \| SHIPPED \| DELIVERED`), `placed_at` (display only), `paypal_order_id` (unique), `capture_id` (unique), `currency`, `captured_minor`, `items_json` (`[{item_ref, name, unit_minor, quantity}]`), `shipping_minor`, `captured_at` |
+| `sessions` | `id`, `ticket_id`, `customer_id`, `ticket_body` (untrusted), `token_hash` (unique), `created_at`, `expires_at`, `status` |
+| `handles` | §4 columns plus `label` (shown to the agent) and `goodwill_pct` (GOODWILL_PCT only) |
+| `decisions` | `id`, `session_id`, `tool`, `request_json`, `verdict`, `reason_codes`, `capture_id` (for §8 reconciliation), `amount_minor`, `currency`, `idempotency_key` (unique; NULL for BLOCKs), `policy_version`, `latency_ms`, `created_at` |
+| `holds` | `id`, `decision_id` (unique), `frozen_request_json`, `status` (`PENDING \| APPROVED \| DENIED \| EXPIRED \| EXECUTED`), `approver`, `created_at` (for `HOLD_TIMEOUT_MINUTES`), `decided_at` |
+| `ledger` | `id`, `decision_id` (unique), `capture_id`, `paypal_refund_id` (unique), `amount_minor`, `currency`, `status`, `created_at` |
+| `webhook_events` | `event_id` (primary key), `event_type`, `resource_id`, `verified`, `payload_json`, `received_at` |
 | `alerts` | `id`, `kind`, `details_json`, `created_at`, `acknowledged` |
+
+v1.3 additions to the original §9: `orders.status` and `placed_at` (returned by §3.1), `decisions.capture_id`, `holds.created_at`, and `handles.label` and `goodwill_pct`.
 
 ## 10. Sessions API (orchestrator → Wardlock)
 
