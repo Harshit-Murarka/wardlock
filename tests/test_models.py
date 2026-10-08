@@ -241,3 +241,24 @@ def test_ids_have_readable_prefixes(db):
     assert session.id.startswith("ses_")
     assert decision.id.startswith("dec_")
     assert handle.handle_id.startswith("h_") and len(handle.handle_id) == 2 + 22  # token_urlsafe(16)
+
+
+def test_parents_and_children_can_be_saved_in_one_flush(db):
+    """P5 saves a decision with its hold or ledger row in one go. SQLAlchemy must insert
+    parents first, which it only does when the models declare their relationships."""
+    customer = Customer(id="cust_ana", first_name="Ana", email="ana@example.com")
+    order = make_order()
+    session = AgentSession(id="ses_x", ticket_id="T-1", customer_id="cust_ana", ticket_body="hi",
+                           token_hash="b" * 64, expires_at=NOW + timedelta(minutes=30))
+    order.id = "ord_x"
+    handle = Handle(session_id="ses_x", order_id="ord_x", capture_id=order.capture_id, kind=HandleKind.SHIPPING,
+                    label="Shipping", amount_minor=650, currency="USD")
+    decision = make_decision("ses_x", id="dec_x")
+    hold = Hold(decision_id="dec_x", frozen_request_json={})
+    ledger = LedgerEntry(decision_id="dec_x", capture_id=order.capture_id, paypal_refund_id="R1",
+                         amount_minor=650, currency="USD", status="COMPLETED")
+
+    db.add_all([ledger, hold, decision, handle, session, order, customer])  # children first, on purpose
+    db.flush()
+
+    assert db.get(Hold, hold.id).decision_id == "dec_x"

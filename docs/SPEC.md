@@ -1,5 +1,9 @@
-# Wardlock — Technical Spec (narrowed scope) · v1.3 · Oct 7, 2026
+# Wardlock — Technical Spec (narrowed scope) · v1.4 · Oct 8, 2026
 
+> v1.4 changes:
+> - §4: handle rules as built. In-flight (reserved) amounts reduce the remaining refundable; re-mint rules; atomic reserve.
+> - §10: `/sessions` error behaviour (503 when no key is configured).
+>
 > v1.3 changes:
 > - §7: seeding details checked against the Orders v2 OpenAPI spec. Seeding is resumable with a state file, and has `--restore-db`. It pays with a sandbox test card by default (single-step create, no approvals), with browser approval as a fallback.
 > - §9: as built, adding `orders.status`/`placed_at`, `decisions.capture_id`, `holds.created_at` and `handles.label`/`goodwill_pct`.
@@ -128,6 +132,18 @@ Rules:
 - Amounts: `LINE_ITEM` = unit_amount × quantity; `SHIPPING` = breakdown shipping; `GOODWILL_PCT` = percentage (from policy) of item total, rounded half-up to minor units; `FULL_REMAINING` = captured − already refunded (ledger).
 - One `GOODWILL_PCT` handle is minted per value in policy `goodwill_percentages` (default 10 and 25 → two handles per order). Example: item total 19.98 → 10% = 2.00, 25% = 5.00 (4.995 rounded half-up).
 - Re-minting after a refund must reflect the new remaining refundable amount.
+
+As built in P3 (`wardlock/handles.py`, `wardlock/sessions.py`):
+- **Remaining refundable** = captured − ledger refunds (all except `FAILED`/`CANCELLED`) − amounts of **RESERVED** handles on the same capture. The reserved ones are in flight, e.g. held. Without this, two held refunds could add up to more than the capture.
+- **Each mint** (`get_session_context` call):
+  - first expires the session's older AVAILABLE handles, so no stale amount survives;
+  - never re-offers a line item or shipping that is RESERVED or CONSUMED for that order in *any* session;
+  - offers no goodwill once any goodwill on the order is reserved or consumed (at most one gesture per order);
+  - drops options above the remaining amount, and goodwill that rounds to 0.
+  - `FULL_REMAINING` shows the current remaining amount, and is omitted at 0.
+- **Reserving** is one conditional `UPDATE … WHERE state=AVAILABLE AND session_id=… RETURNING`. It is all or nothing: on a shortfall, exactly the rows it changed are reverted, and it raises `HandleConflict`. Concurrent requests can't double-spend a handle. Consume is all or nothing too.
+- **Session end:** AVAILABLE handles expire, while RESERVED ones wait for their hold. A release after the session ended goes to EXPIRED, not AVAILABLE. Expiry is applied lazily when the session is next resolved.
+- **Duplicate handle IDs** in one request collapse to one. **P4 must not sum duplicates**: it should compute amounts over unique handles only.
 
 ## 5. Decision engine (pure function, no I/O)
 
@@ -272,6 +288,14 @@ v1.3 additions to the original §9: `orders.status` and `placed_at` (returned by
 
 `POST /sessions` with header `X-Service-Key`. Body: `{ticket_id, customer_id, ticket_body}`. `ticket_id` and `customer_id` come from ticket **metadata** only. `ticket_body` is stored as **untrusted** text. It is used only by the reason check (§11) and the console's ticket replay (§12), never for ownership or amounts.
 Returns `{session_id, session_token, expires_at}`. Store only a SHA-256 hash of the token. TTL `SESSION_TTL_MINUTES`.
+
+**Errors (fail closed):**
+- `WARDLOCK_SERVICE_KEY` unset → **503** for everyone;
+- missing or wrong key → 401, checked in constant time and before the body is validated;
+- unknown customer → 404;
+- malformed body, unknown fields, or `ticket_body` over 50,000 characters → 422.
+
+The token is `secrets.token_urlsafe(32)` (256 bits) and is returned only once.
 
 ## 11. LLM reason check (escalation only)
 

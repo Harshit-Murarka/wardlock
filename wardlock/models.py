@@ -27,7 +27,7 @@ from sqlalchemy import (
     Text,
     TypeDecorator,
 )
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
 def new_id(prefix: str) -> str:
@@ -137,6 +137,17 @@ class Base(DeclarativeBase):
     pass
 
 
+def _parent():
+    """A many-to-one link to the parent row.
+
+    These relationships are not used for reading. SQLAlchemy relies on them to INSERT
+    parents before children when both are saved in one flush; without them it may
+    insert a hold before its decision and break the foreign key. lazy="raise" makes an
+    accidental attribute access fail loudly instead of running a hidden query.
+    """
+    return relationship(lazy="raise")
+
+
 class Customer(Base):
     __tablename__ = "customers"
 
@@ -154,6 +165,7 @@ class Order(Base):
 
     id: Mapped[str] = mapped_column(String(40), primary_key=True, default=lambda: new_id("ord"))
     customer_id: Mapped[str] = mapped_column(ForeignKey("customers.id"), index=True)
+    customer: Mapped[Customer] = _parent()
     order_ref: Mapped[str] = mapped_column(String(32), unique=True)  # customer-facing, e.g. "A-1001"
     status: Mapped[OrderStatus] = mapped_column(_enum(OrderStatus))
     placed_at: Mapped[date] = mapped_column(Date)  # display only; refund windows use captured_at
@@ -178,6 +190,7 @@ class AgentSession(Base):
     id: Mapped[str] = mapped_column(String(40), primary_key=True, default=lambda: new_id("ses"))
     ticket_id: Mapped[str] = mapped_column(String(64))
     customer_id: Mapped[str] = mapped_column(ForeignKey("customers.id"), index=True)
+    customer: Mapped[Customer] = _parent()
     # UNTRUSTED customer text. Used only by the reason check and the replay page,
     # never for ownership or amounts.
     ticket_body: Mapped[str] = mapped_column(Text)
@@ -186,6 +199,10 @@ class AgentSession(Base):
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
     expires_at: Mapped[datetime] = mapped_column(UTCDateTime())
     status: Mapped[SessionStatus] = mapped_column(_enum(SessionStatus), default=SessionStatus.ACTIVE)
+
+    def is_live(self, now: datetime) -> bool:
+        """True while the session may still be used: ACTIVE and not past its expiry."""
+        return self.status == SessionStatus.ACTIVE and now < self.expires_at
 
 
 class Handle(Base):
@@ -202,7 +219,9 @@ class Handle(Base):
 
     handle_id: Mapped[str] = mapped_column(String(40), primary_key=True, default=new_handle_id)
     session_id: Mapped[str] = mapped_column(ForeignKey("sessions.id"), index=True)
+    agent_session: Mapped[AgentSession] = _parent()
     order_id: Mapped[str] = mapped_column(ForeignKey("orders.id"))
+    order: Mapped[Order] = _parent()
     capture_id: Mapped[str] = mapped_column(String(64))  # re-checked against orders at decision time
     kind: Mapped[HandleKind] = mapped_column(_enum(HandleKind))
     item_ref: Mapped[str | None] = mapped_column(String(32))  # LINE_ITEM only
@@ -224,6 +243,7 @@ class Decision(Base):
 
     id: Mapped[str] = mapped_column(String(40), primary_key=True, default=lambda: new_id("dec"))
     session_id: Mapped[str] = mapped_column(ForeignKey("sessions.id"), index=True)
+    agent_session: Mapped[AgentSession] = _parent()
     tool: Mapped[str] = mapped_column(String(40))  # request_refund | request_refund_raw
     request_json: Mapped[dict[str, Any]] = mapped_column(JSON)  # what the agent sent (untrusted)
     verdict: Mapped[Verdict] = mapped_column(_enum(Verdict))
@@ -246,6 +266,7 @@ class Hold(Base):
 
     id: Mapped[str] = mapped_column(String(40), primary_key=True, default=lambda: new_id("hold"))
     decision_id: Mapped[str] = mapped_column(ForeignKey("decisions.id"), unique=True)
+    decision: Mapped[Decision] = _parent()
     # capture_id, amount, currency, idempotency_key and note: exactly what will be sent.
     frozen_request_json: Mapped[dict[str, Any]] = mapped_column(JSON)
     status: Mapped[HoldStatus] = mapped_column(_enum(HoldStatus), default=HoldStatus.PENDING)
@@ -264,6 +285,7 @@ class LedgerEntry(Base):
     # Unique: one refund per decision, and one row per PayPal refund. Whichever of the
     # executor and the webhook handler writes second is rejected (SPEC §8).
     decision_id: Mapped[str] = mapped_column(ForeignKey("decisions.id"), unique=True)
+    decision: Mapped[Decision] = _parent()
     capture_id: Mapped[str] = mapped_column(String(64), index=True)
     paypal_refund_id: Mapped[str] = mapped_column(String(64), unique=True)
     amount_minor: Mapped[int] = mapped_column(Integer)

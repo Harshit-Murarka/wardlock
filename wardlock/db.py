@@ -5,9 +5,11 @@ There are no migrations. After a schema change, delete wardlock.db and run
 `python scripts/seed_sandbox.py --restore-db`, which needs no PayPal calls.
 """
 
+from collections.abc import Iterator
 from functools import lru_cache
 from typing import Any
 
+from fastapi import Request
 from sqlalchemy import Engine, create_engine, event
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -55,3 +57,13 @@ def make_session_factory(engine: Engine) -> sessionmaker[Session]:
 def init_db(engine: Engine) -> None:
     """Create any missing tables. Existing tables are left as they are."""
     Base.metadata.create_all(engine)
+
+
+def get_db(request: Request) -> Iterator[Session]:
+    """FastAPI dependency: one database session per request, closed afterwards.
+
+    Nothing is committed automatically. A route that changes data commits itself, so a
+    failed request leaves nothing half-written.
+    """
+    with request.app.state.session_factory() as session:
+        yield session
