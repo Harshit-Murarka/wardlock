@@ -1,5 +1,8 @@
-# Wardlock — Technical Spec (narrowed scope) · v1.4 · Oct 8, 2026
+# Wardlock — Technical Spec (narrowed scope) · v1.5 · Oct 9, 2026
 
+> v1.5 changes:
+> - §0: the ten invariants now live here, the single tracked copy that code comments refer to.
+>
 > v1.4 changes:
 > - §4: handle rules as built. In-flight (reserved) amounts reduce the remaining refundable; re-mint rules; atomic reserve.
 > - §10: `/sessions` error behaviour (503 when no key is configured).
