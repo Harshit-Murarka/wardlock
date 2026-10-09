@@ -21,3 +21,33 @@ def test_only_the_paypal_client_knows_paypal_api_hosts():
         and PAYPAL_API_HOST.search(path.read_text(encoding="utf-8"))
     ]
     assert offenders == []
+
+
+ENGINE = PACKAGE / "engine"
+
+
+def test_the_engine_imports_nothing_that_can_do_io():
+    """SPEC §5: the engine is pure. Checked in a fresh interpreter so other tests can't hide it."""
+    import subprocess
+    import sys
+
+    code = (
+        "import sys, wardlock.engine.decide, wardlock.engine.checks, wardlock.engine.policy, wardlock.engine.types\n"
+        "banned = ('sqlalchemy', 'httpx', 'fastapi', 'pydantic', 'wardlock.db', 'wardlock.models',\n"
+        "          'wardlock.config', 'wardlock.paypal.client', 'wardlock.handles', 'wardlock.sessions')\n"
+        "print([m for m in banned if m in sys.modules])"
+    )
+    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
+    assert result.stdout.strip() == "[]"
+
+
+def test_the_engine_never_reads_the_clock_itself():
+    """The current time is always passed in, so every decision can be reproduced in a test."""
+    forbidden = ("datetime.now", "utcnow", "time.time", "time.monotonic", "date.today")
+    offenders = [
+        f"{path.name}: {word}"
+        for path in ENGINE.glob("*.py")
+        for word in forbidden
+        if word in path.read_text(encoding="utf-8")
+    ]
+    assert offenders == []

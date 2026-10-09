@@ -71,50 +71,18 @@ class UTCDateTime(TypeDecorator[datetime]):
 
 # ---------------------------------------------------------------- enums
 
-
-class OrderStatus(enum.StrEnum):
-    PROCESSING = "PROCESSING"
-    SHIPPED = "SHIPPED"
-    DELIVERED = "DELIVERED"
-
-
-class SessionStatus(enum.StrEnum):
-    ACTIVE = "ACTIVE"
-    CLOSED = "CLOSED"
-    EXPIRED = "EXPIRED"
-
-
-class HandleKind(enum.StrEnum):
-    LINE_ITEM = "LINE_ITEM"
-    SHIPPING = "SHIPPING"
-    GOODWILL_PCT = "GOODWILL_PCT"
-    FULL_REMAINING = "FULL_REMAINING"
-
-
-class HandleState(enum.StrEnum):
-    AVAILABLE = "AVAILABLE"
-    RESERVED = "RESERVED"
-    CONSUMED = "CONSUMED"
-    EXPIRED = "EXPIRED"
-
-
-class Verdict(enum.StrEnum):
-    ALLOW = "ALLOW"
-    HOLD = "HOLD"
-    BLOCK = "BLOCK"
-
-
-class HoldStatus(enum.StrEnum):
-    PENDING = "PENDING"
-    APPROVED = "APPROVED"
-    DENIED = "DENIED"
-    EXPIRED = "EXPIRED"
-    EXECUTED = "EXECUTED"
-
-
-class AlertKind(enum.StrEnum):
-    OUT_OF_BAND_REFUND = "OUT_OF_BAND_REFUND"
-    CAPTURE_REVERSED = "CAPTURE_REVERSED"
+# Defined in wardlock/enums.py so the pure engine can use them without SQLAlchemy.
+# Re-exported here so `from wardlock.models import HandleKind` keeps working.
+from wardlock.enums import (  # noqa: E402
+    AlertKind,
+    HandleKind,
+    HandleState,
+    HoldStatus,
+    OrderStatus,
+    ReasonCode,
+    SessionStatus,
+    Verdict,
+)
 
 
 def _enum(enum_class: type[enum.StrEnum]) -> Enum:

@@ -1,6 +1,7 @@
 # Wardlock policy (see docs/SPEC.md §5). Changes here are recorded with every decision.
 version: 1
-auto_approve_limit: "50.00"
+currency: USD                 # the currency auto_approve_limit is in; other currencies are always held
+auto_approve_limit: "50.00"   # keep the quotes: an unquoted 50.00 is a YAML float and is rejected
 max_refunds_per_session: 2
 goodwill_percentages: [10, 25]
 reason_allows:

@@ -1,5 +1,12 @@
-# Wardlock — Technical Spec (narrowed scope) · v1.5 · Oct 9, 2026
+# Wardlock — Technical Spec (narrowed scope) · v1.7 · Oct 9, 2026
 
+> v1.7 changes:
+> - §5 #10: the auto-approve limit covers the session's running total of automatic refunds, which stops salami slicing.
+> - §6 steps 9–10: approving a hold re-checks with fresh data, and compat refunds mark their handle as used (both built in P5).
+>
+> v1.6 changes:
+> - §5: the engine as built. The reason check is a separate escalate-only step; new compat code `INVALID_AMOUNT`; stricter combination rules; the limit has a currency; inclusive 180-day window.
+>
 > v1.5 changes:
 > - §0: the ten invariants now live here, the single tracked copy that code comments refer to.
 >
@@ -168,7 +175,7 @@ Checks run in order; collect **all** reason codes that can be evaluated (for exp
 | 7 | Amount ≤ remaining refundable (ledger) | BLOCK | `EXCEEDS_REFUNDABLE` |
 | 8 | Capture age ≤ 180 days | BLOCK | `REFUND_WINDOW_EXPIRED` |
 | 9 | Reason allows these handle kinds (policy matrix) | HOLD | `REASON_KIND_MISMATCH` |
-| 10 | Amount ≤ policy `auto_approve_limit` | HOLD | `OVER_AUTO_LIMIT` |
+| 10 | Amount + the session's earlier **automatic** refunds ≤ policy `auto_approve_limit` | HOLD | `OVER_AUTO_LIMIT` |
 | 11 | Successful refunds in session < `max_refunds_per_session` | HOLD | `SESSION_VELOCITY` |
 | 12 | Reason check says consistent (only if verdict would be ALLOW) | HOLD | `REASON_NOT_SUPPORTED_BY_TICKET` |
 | 13 | Any dependency error while gathering inputs | HOLD | `DEPENDENCY_UNAVAILABLE` |
@@ -179,6 +186,8 @@ Compat-only: `NOT_OWNER` (BLOCK), `MISSING_AMOUNT` (BLOCK), `AMOUNT_NOT_DERIVABL
 
 Default `policy.yaml`. It is the **only** source for these limits. They are not environment variables, so every decision records exactly which `policy_version` it used.
 ```yaml
+version: 1
+currency: USD
 auto_approve_limit: "50.00"
 max_refunds_per_session: 2
 goodwill_percentages: [10, 25]
@@ -189,6 +198,25 @@ reason_allows:
   LATE_DELIVERY: [SHIPPING, GOODWILL_PCT]
   GOODWILL:      [GOODWILL_PCT]
 ```
+
+**As built in P4 (`wardlock/engine/`).** Pure: no database, no network, no clock reads. The caller passes `now` and every fact. A test runs it in a fresh interpreter to check it imports nothing that can do I/O. Ambiguities in the table above were resolved like this:
+1. **The reason check (#12) is a separate step,** because an LLM call is I/O.
+   - `decide()` returns `needs_reason_check=True` for an ALLOW.
+   - `apply_reason_check(decision, consistent)` can **only** turn ALLOW into HOLD. Anything but exactly `True` (including `None` for a timeout) holds. It never relaxes a BLOCK or a HOLD (invariant 6).
+   - The executor must not run a decision that still needs the check.
+2. **Combination rules (#5)** also BLOCK `INVALID_COMBINATION` for the same handle twice (it would double the amount), more than 10 handles, mixed currencies, and any raw amount or capture sent to `request_refund` (invariant 2).
+3. **New compat code `INVALID_AMOUNT` (BLOCK)** for an amount that is ≤ 0, not exact in the currency (e.g. 4.001 USD), or in a currency other than the capture's. A HOLD would let a merchant approve a malformed amount.
+4. **Compat with a missing or unknown capture → BLOCK `NOT_OWNER`,** so the existence of other captures is never revealed. A compat decision never records another customer's capture as its target.
+5. **Compat reason check (#9):** the raw amount maps to the kinds that produce exactly that amount, via `OrderView.derivable`. One allowed kind is enough.
+6. **`auto_approve_limit` covers the whole session, in `policy.currency` (USD).**
+   - The limit applies to the amount **plus** everything already refunded automatically (verdict ALLOW) in this session (`SessionView.auto_refunded_minor`).
+   - This stops "salami slicing": two 49.99 refunds would each pass a per-refund check, but together they are 99.98.
+   - Refunds a person approved from a hold don't count.
+   - The field has no default, so the caller can't forget it.
+   - A refund in any other currency is held, and amounts are never compared across currencies.
+7. **The window (#8) is inclusive:** ≤ 180 days. It's a constant, because it's PayPal's rule.
+8. **Missing order data for a known handle → HOLD `DEPENDENCY_UNAVAILABLE` (#13).** As a last guard, an otherwise clean decision that lacks an amount or a capture also holds.
+9. **Codes are listed in table order,** with the compat codes in their natural place: `MISSING_AMOUNT`/`INVALID_AMOUNT` after `NOT_OWNER`, and `AMOUNT_NOT_DERIVABLE` before #13. Each code has a plain-words explanation in `engine/codes.py`.
 
 ## 6. Executor
 
@@ -210,6 +238,11 @@ reason_allows:
 | `PayPalRequestError` (other 4xx) | BLOCK |
 7. On HOLD: `holds` row with the frozen request (`capture_id`, `amount`, `currency`, `idempotency_key`, `note`); handles RESERVED.
 8. Approve (admin) → execute the frozen request exactly. Deny or timeout (`HOLD_TIMEOUT_MINUTES`) → release handles, mark hold.
+9. **Approve re-checks before executing (to build in P5).**
+   - The executor rebuilds the facts from **fresh** data and re-runs the engine. If any BLOCK code now appears (session, handle state, ownership, remaining amount, 180-day window), the approval is refused and the hold is marked so. A hold can sit for minutes, and things change in that time.
+   - A hold whose codes include `DEPENDENCY_UNAVAILABLE` because order data was missing can't be approved until a re-check passes.
+   - The frozen amount and idempotency key never change. The re-check can only stop an approval, never alter one.
+10. **Compat refunds mark the matching handle as used (to build in P5).** A raw 4.00 that matches the bell must reserve and then consume the bell's handle. Otherwise the bell would be offered again, and could be refunded twice.
 
 ## 7. PayPal API usage (sandbox base `https://api-m.sandbox.paypal.com`)
 

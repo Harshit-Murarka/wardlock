@@ -16,6 +16,7 @@ dependencies = [
     "sqlalchemy>=2.0",
     "mcp>=1.8",  # 1.8 added the streamable HTTP transport (SPEC §3)
     "python-dotenv>=1.0",
+    "pyyaml>=6",  # policy.yaml (SPEC §5)
 ]
 
 [project.optional-dependencies]
