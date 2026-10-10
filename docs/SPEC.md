@@ -1,5 +1,10 @@
-# Wardlock — Technical Spec (narrowed scope) · v1.7 · Oct 9, 2026
+# Wardlock — Technical Spec (narrowed scope) · v1.8 · Oct 9, 2026
 
+> v1.8 changes:
+> - §6: the executor as built: outcome mapping, unknown-outcome holds, approval claim and re-check, sweeps, an item spent once per order.
+> - §11: the reason check and the OpenAI-compatible LLM adapter.
+> - §9: new columns.
+>
 > v1.7 changes:
 > - §5 #10: the auto-approve limit covers the session's running total of automatic refunds, which stops salami slicing.
 > - §6 steps 9–10: approving a hold re-checks with fresh data, and compat refunds mark their handle as used (both built in P5).
@@ -238,11 +243,36 @@ reason_allows:
 | `PayPalRequestError` (other 4xx) | BLOCK |
 7. On HOLD: `holds` row with the frozen request (`capture_id`, `amount`, `currency`, `idempotency_key`, `note`); handles RESERVED.
 8. Approve (admin) → execute the frozen request exactly. Deny or timeout (`HOLD_TIMEOUT_MINUTES`) → release handles, mark hold.
-9. **Approve re-checks before executing (to build in P5).**
+9. **Approve re-checks before executing (built in P5).**
    - The executor rebuilds the facts from **fresh** data and re-runs the engine. If any BLOCK code now appears (session, handle state, ownership, remaining amount, 180-day window), the approval is refused and the hold is marked so. A hold can sit for minutes, and things change in that time.
    - A hold whose codes include `DEPENDENCY_UNAVAILABLE` because order data was missing can't be approved until a re-check passes.
    - The frozen amount and idempotency key never change. The re-check can only stop an approval, never alter one.
-10. **Compat refunds mark the matching handle as used (to build in P5).** A raw 4.00 that matches the bell must reserve and then consume the bell's handle. Otherwise the bell would be offered again, and could be refunded twice.
+10. **Compat refunds mark the matching handle as used (built in P5).** A raw 4.00 that matches the bell must reserve and then consume the bell's handle. Otherwise the bell would be offered again, and could be refunded twice.
+
+**As built in P5 (`wardlock/executor.py`).** Order of work: gather facts → `decide()` → reason check (ALLOW only) → **one transaction** (decision row with a `uuid4` idempotency key for ALLOW and HOLD, reserve the handles, any hold; **commit**) → call PayPal **outside** any transaction → record the outcome in a second transaction. Decision and ledger timestamps come from the executor's clock.
+
+PayPal outcomes:
+
+| Outcome | Result |
+|---|---|
+| refund `COMPLETED` / `PENDING` | ledger row, handles CONSUMED → ALLOWED (PENDING counts as refunded) |
+| refund `FAILED` / `CANCELLED` | ledger row kept for audit (not counted), handles released → BLOCKED `PAYPAL_REFUND_FAILED` |
+| `PayPalRequestError` (4xx) or a local validation error | handles released, PayPal's name and issues stored in `decisions.details_json` → BLOCKED `PAYPAL_REJECTED` |
+| `PayPalAuthError` | HELD, `outcome_unknown = false` (PayPal processed nothing) |
+| `PayPalUnavailable` / anything unexpected | HELD, `outcome_unknown = true` (T9) |
+
+- **Unknown-outcome holds can only be approved.** Deny and the timeout sweep refuse them. Freeing their handles would let the agent ask again under a **new** key and maybe refund twice. Approving re-sends the **same** key, which is always safe, and these holds skip the re-check for that reason.
+- **Approval** claims the hold with a conditional `UPDATE … WHERE status = PENDING`, so a second approval never calls PayPal. Then:
+  - it re-checks with fresh data (`engine/recheck.py`): missing order → stays PENDING; not owner, window passed, handle no longer reserved, or amount > remaining + the hold's own reserved amount → `BLOCKED`, handles released;
+  - then it sends the frozen request exactly;
+  - success → `EXECUTED`; FAILED or 4xx → `BLOCKED`; unavailable or auth → back to `PENDING` (approve again later, same key).
+- **Sweeps:**
+  - `expire_stale_holds()`: PENDING and known outcome, older than `HOLD_TIMEOUT_MINUTES`;
+  - `recover_stuck()`: an ALLOW with a key but no ledger row and no hold after 5 minutes means a crash mid-call, so it becomes an unknown-outcome hold.
+- **An item can be spent only once per order.** Reserving (`handles.reserve_handles`, and compat's `reserve_new_handle`) refuses a line item, the shipping, or any goodwill when another handle for it is already RESERVED or CONSUMED, in any session. Without this, two sessions that both minted the bell could each refund it. Reservations on one order are serialised: a row lock on Postgres; on SQLite, a single writer.
+- **Compat** reserves a new handle copied from the matching option (preferring a kind the reason allows). An amount matching nothing gets a `CUSTOM_AMOUNT` handle, so it counts as in flight while held.
+- **The note** is made single-line, trimmed and cut to 200 characters before it is frozen or sent.
+- **Facts from the database:** `refunds_so_far` and `auto_refunded_minor` come from this session's ledger rows (not FAILED or CANCELLED; for the automatic total, only verdict ALLOW in the policy currency). A database error while gathering → HOLD `DEPENDENCY_UNAVAILABLE`.
 
 ## 7. PayPal API usage (sandbox base `https://api-m.sandbox.paypal.com`)
 
@@ -318,6 +348,8 @@ Implemented in `wardlock/models.py`. Money is integer minor units. Timestamps ar
 | `webhook_events` | `event_id` (primary key), `event_type`, `resource_id`, `verified`, `payload_json`, `received_at` |
 | `alerts` | `id`, `kind`, `details_json`, `created_at`, `acknowledged` |
 
+v1.8 additions (P5): `decisions.details_json` (reason-check rationale, PayPal errors), `holds.outcome_unknown`, `HoldStatus.BLOCKED`, and `HandleKind.CUSTOM_AMOUNT` (compat holds only, never offered to agents). After this change, delete `wardlock.db` and run `seed_sandbox.py --restore-db`.
+
 v1.3 additions to the original §9: `orders.status` and `placed_at` (returned by §3.1), `decisions.capture_id`, `holds.created_at`, and `handles.label` and `goodwill_pct`.
 
 ## 10. Sessions API (orchestrator → Wardlock)
@@ -336,6 +368,12 @@ The token is `secrets.token_urlsafe(32)` (256 bits) and is returned only once.
 ## 11. LLM reason check (escalation only)
 
 Runs only when the engine would otherwise ALLOW. Input: `reason_code`, handle labels, and the ticket body wrapped in clear "untrusted customer text" delimiters. Output must be JSON `{"consistent": true|false, "rationale": "<= 25 words"}`. Timeout 8 s, invalid JSON, or any error → treat as not consistent → HOLD.
+
+**As built in P5 (`wardlock/reason_check.py`, `wardlock/llm.py`):**
+- **LLM:** any **OpenAI-compatible** chat API, set with `LLM_BASE_URL`, `LLM_API_KEY` and `LLM_MODEL`. Free options include Google Gemini (AI Studio) and Groq. The URL must be https, or plain http only for localhost. Temperature is 0.
+- **Prompt:** the reason, the option labels, and the ticket between `<<<UNTRUSTED_CUSTOMER_TEXT>>>` markers. Any `<<<`/`>>>` in the ticket is broken up so it can't close the block, and the ticket is capped at 8,000 characters. The system prompt says the text is data and must never be obeyed.
+- **Parse:** exactly `{"consistent": <bool>, "rationale": <str>}`. One ```json fence is tolerated, and the rationale is cut to 25 words. Anything else, a timeout (8 s) or any error → `None` → HOLD. No LLM configured → every ALLOW is held (fail closed).
+- **Injection risk:** a prompt-injected ticket can at worst make the model say "consistent", which only keeps an ALLOW the deterministic rules already gave.
 
 ## 12. Admin console
 

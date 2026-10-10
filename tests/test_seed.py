@@ -188,11 +188,12 @@ def test_real_seed_files_are_valid():
     data = load_seed(REPO / "seed" / "customers.json", REPO / "seed" / "orders.json")
     totals = {o.order_ref: o.total for o in data.orders}
 
-    assert len(data.orders) == 13
+    assert len(data.orders) == 14
     assert totals["A-1001"] == Decimal("26.48")  # the SPEC §3.1 example
     assert totals["C-3002"] == Decimal("59.97")  # 3 x 19.99 with no float error
     assert totals["A-1002"] == totals["B-2001"] == Decimal("189.00")  # demo HOLD scene and injection target
-    assert {o.order_ref for o in data.orders if o.customer_id == "cust_qa"} == {"Z-9001"}
+    # QA-only orders: Z-9001 for smoke refunds, Z-9002 for the live executor check.
+    assert {o.order_ref for o in data.orders if o.customer_id == "cust_qa"} == {"Z-9001", "Z-9002"}
     assert {o.currency for o in data.orders} == {"USD"}
 
 
@@ -265,7 +266,7 @@ def test_dry_run_sends_nothing_and_touches_no_database(monkeypatch, capsys):
 
     out = capsys.readouterr().out
     assert code == 0
-    assert "13 orders are valid (paid with a sandbox test card). Nothing was sent." in out
+    assert "14 orders are valid (paid with a sandbox test card). Nothing was sent." in out
     # Card details are masked even though they are public test values.
     assert "************0004" in out
     assert DEFAULT_SANDBOX_CARD_NUMBER not in out

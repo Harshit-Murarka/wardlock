@@ -32,7 +32,8 @@ def test_the_engine_imports_nothing_that_can_do_io():
     import sys
 
     code = (
-        "import sys, wardlock.engine.decide, wardlock.engine.checks, wardlock.engine.policy, wardlock.engine.types\n"
+        "import sys, wardlock.engine.decide, wardlock.engine.checks, wardlock.engine.policy, wardlock.engine.types,"
+        " wardlock.engine.recheck\n"
         "banned = ('sqlalchemy', 'httpx', 'fastapi', 'pydantic', 'wardlock.db', 'wardlock.models',\n"
         "          'wardlock.config', 'wardlock.paypal.client', 'wardlock.handles', 'wardlock.sessions')\n"
         "print([m for m in banned if m in sys.modules])"

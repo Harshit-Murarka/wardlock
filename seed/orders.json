@@ -91,5 +91,13 @@
     "items": [
       {"item_ref": "widget", "name": "Smoke-test widget (not for demos)", "unit_amount": "10.00", "quantity": 1}
     ]
+  },
+  {
+    "order_ref": "Z-9002", "customer_id": "cust_qa", "placed_at": "2026-10-09", "status": "DELIVERED",
+    "currency": "USD", "shipping": "0.00",
+    "items": [
+      {"item_ref": "sticker", "name": "QA sticker", "unit_amount": "2.00", "quantity": 1},
+      {"item_ref": "widget", "name": "QA widget", "unit_amount": "20.00", "quantity": 1}
+    ]
   }
 ]

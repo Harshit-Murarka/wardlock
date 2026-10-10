@@ -26,8 +26,8 @@ class Settings(BaseSettings):
     paypal_webhook_id: str = ""
     allow_live: bool = False
 
-    # LLM adapter used by wardlock/llm.py.
-    llm_provider: str = ""
+    # LLM adapter used by wardlock/llm.py: any OpenAI-compatible chat API (Gemini, Groq, ...).
+    llm_base_url: str = ""
     llm_api_key: SecretStr = SecretStr("")
     llm_model: str = ""
 

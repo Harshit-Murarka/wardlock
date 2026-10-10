@@ -224,6 +224,8 @@ class Decision(Base):
     idempotency_key: Mapped[str | None] = mapped_column(String(64), unique=True)
     policy_version: Mapped[str] = mapped_column(String(32))
     latency_ms: Mapped[int | None] = mapped_column(Integer)
+    # Extra facts for the console: the reason-check rationale, PayPal's error name and issues.
+    details_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
 
 
@@ -239,6 +241,10 @@ class Hold(Base):
     frozen_request_json: Mapped[dict[str, Any]] = mapped_column(JSON)
     status: Mapped[HoldStatus] = mapped_column(_enum(HoldStatus), default=HoldStatus.PENDING)
     approver: Mapped[str | None] = mapped_column(String(100))
+    # True when PayPal may already have made this refund (a timeout, say). Such a hold can only
+    # be APPROVED, which re-sends the same key and is always safe. Denying or expiring it would
+    # free the handles for a new request under a new key, and that could refund twice.
+    outcome_unknown: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)  # for HOLD_TIMEOUT
     decided_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
 

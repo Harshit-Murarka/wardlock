@@ -282,3 +282,37 @@ def test_reaching_exactly_the_limit_over_the_session_is_allowed():
 def test_the_session_total_applies_to_compat_too():
     decision = run_raw(session=replace(ANA, refunds_so_far=1, auto_refunded_minor=4999))
     assert (decision.verdict, decision.reason_codes) == (H, (Code.OVER_AUTO_LIMIT,))
+
+
+# ---------------------------------------------------------------- approval re-check (SPEC §6.9)
+
+from wardlock.engine.recheck import HoldFacts, recheck_approval  # noqa: E402
+
+
+def hold_facts(**changes):
+    facts = HoldFacts(session_customer_id="cust_ana", amount_minor=18900, order=ORDERS["CAP_A1002"],
+                      own_reserved_minor=18900, handle_states=(HandleState.RESERVED,))
+    return replace(facts, **changes)
+
+
+def test_a_still_valid_hold_passes_the_recheck():
+    # remaining is 18900 here, and the hold's own 18900 is added back, so 18900 still fits.
+    assert recheck_approval(hold_facts(), NOW) == ()
+
+
+@pytest.mark.parametrize(
+    ("changes", "code"),
+    [
+        (dict(order=replace(ORDERS["CAP_A1002"], customer_id="cust_ben")), Code.NOT_OWNER),
+        (dict(handle_states=(HandleState.CONSUMED,)), Code.HANDLE_ALREADY_USED),
+        (dict(handle_states=()), Code.HANDLE_ALREADY_USED),
+        (dict(order=replace(ORDERS["CAP_A1002"], remaining_minor=0), own_reserved_minor=100), Code.EXCEEDS_REFUNDABLE),
+        (dict(order=replace(ORDERS["CAP_A1002"], captured_at=NOW - timedelta(days=181))), Code.REFUND_WINDOW_EXPIRED),
+    ],
+)
+def test_the_recheck_refuses_when_something_changed(changes, code):
+    assert code in recheck_approval(hold_facts(**changes), NOW)
+
+
+def test_missing_order_data_means_wait():
+    assert recheck_approval(hold_facts(order=None), NOW) == (Code.DEPENDENCY_UNAVAILABLE,)

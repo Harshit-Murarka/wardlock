@@ -21,6 +21,9 @@ class Code(enum.StrEnum):
     AMOUNT_NOT_DERIVABLE = "AMOUNT_NOT_DERIVABLE"  # compat only
     REASON_NOT_SUPPORTED_BY_TICKET = "REASON_NOT_SUPPORTED_BY_TICKET"
     DEPENDENCY_UNAVAILABLE = "DEPENDENCY_UNAVAILABLE"
+    # Executor outcomes (SPEC §6), never produced by decide(): PayPal itself said no.
+    PAYPAL_REJECTED = "PAYPAL_REJECTED"  # a 4xx such as REFUND_AMOUNT_EXCEEDED
+    PAYPAL_REFUND_FAILED = "PAYPAL_REFUND_FAILED"  # the refund came back FAILED or CANCELLED
 
 
 # BLOCK: the request is wrong and must never run. Nobody can approve it.
@@ -35,6 +38,8 @@ BLOCK_CODES = frozenset({
     Code.INVALID_AMOUNT,
     Code.EXCEEDS_REFUNDABLE,
     Code.REFUND_WINDOW_EXPIRED,
+    Code.PAYPAL_REJECTED,
+    Code.PAYPAL_REFUND_FAILED,
 })
 
 # HOLD: the request may be fine, but a person must approve it first.
@@ -65,4 +70,6 @@ EXPLANATIONS: dict[Code, str] = {
     Code.AMOUNT_NOT_DERIVABLE: "The amount does not match any refund option for this order. A person will review it.",
     Code.REASON_NOT_SUPPORTED_BY_TICKET: "The ticket does not clearly support this reason. A person will review it.",
     Code.DEPENDENCY_UNAVAILABLE: "A system Wardlock relies on did not answer. A person will review it.",
+    Code.PAYPAL_REJECTED: "PayPal declined this refund. No money moved.",
+    Code.PAYPAL_REFUND_FAILED: "PayPal could not complete this refund. No money moved.",
 }

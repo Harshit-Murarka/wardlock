@@ -24,6 +24,9 @@ class HandleKind(enum.StrEnum):
     SHIPPING = "SHIPPING"
     GOODWILL_PCT = "GOODWILL_PCT"
     FULL_REMAINING = "FULL_REMAINING"
+    # Only for compat refunds whose raw amount matches no option. The executor creates
+    # these already RESERVED, so the amount counts as in flight; agents never see them.
+    CUSTOM_AMOUNT = "CUSTOM_AMOUNT"
 
 
 class HandleState(enum.StrEnum):
@@ -45,6 +48,7 @@ class HoldStatus(enum.StrEnum):
     DENIED = "DENIED"
     EXPIRED = "EXPIRED"
     EXECUTED = "EXECUTED"
+    BLOCKED = "BLOCKED"  # the approval was refused for good (re-check failed, or PayPal said no)
 
 
 class AlertKind(enum.StrEnum):
