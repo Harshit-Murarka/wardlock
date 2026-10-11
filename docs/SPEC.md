@@ -1,5 +1,8 @@
-# Wardlock — Technical Spec (narrowed scope) · v1.8 · Oct 9, 2026
+# Wardlock — Technical Spec (narrowed scope) · v1.9 · Oct 9, 2026
 
+> v1.9 changes:
+> - §3.5: the MCP server as built (endpoint, auth, annotations, shapes, errors, DNS-rebinding protection, how to try it).
+>
 > v1.8 changes:
 > - §6: the executor as built: outcome mapping, unknown-outcome holds, approval claim and re-check, sweeps, an item spent once per order.
 > - §11: the reason check and the OpenAI-compatible LLM adapter.
@@ -134,6 +137,34 @@ Accepts a `refund_ref` or `hold_id` from this session only.
 
 ### 3.4 `request_refund_raw(capture_id: str, amount: str, currency: str, reason_code: ReasonCode)` — compat mode
 Exists to show the drop-in story and to demonstrate that raw inputs are contained. Runs the same engine plus: capture must belong to the session customer (`NOT_OWNER` → BLOCK), amount required (`MISSING_AMOUNT` → BLOCK), amount must equal exactly one value derivable for that capture (any single handle amount, or full remaining) — otherwise `AMOUNT_NOT_DERIVABLE` → HOLD.
+
+### 3.5 As built in P6 (`wardlock/mcp_tools.py`, mounted in `wardlock/main.py`)
+- **Endpoint:** `http://localhost:8000/mcp`. It uses MCP streamable HTTP (mcp SDK 2.x `MCPServer`), stateless, with JSON responses. `/health` and `/sessions` are served next to it.
+- **Auth, in every tool:** `Authorization: Bearer <session token>` → `resolve_session()`, which checks the hash, ACTIVE and not expired. Otherwise there's one error for every case: *"Invalid or expired session token…"*. Listing tools needs no token, but calling any tool does.
+  - The server log records why a call was refused (no header, not `Bearer <token>`, or an unknown or ended session), never the token itself.
+  - If the agent pastes its own token into a handle, `capture_id` or `note_to_customer`, the token is replaced with `[redacted]` before anything is stored or sent to PayPal, because only its hash may be kept.
+- **Annotations:**
+
+  | Tool | read_only | destructive | idempotent |
+  |---|---|---|---|
+  | `get_session_context` | ✓ | | ✗ (each call mints fresh handles and expires the old ones) |
+  | `get_refund_status` | ✓ | | ✓ |
+  | `request_refund` | | ✓ | |
+  | `request_refund_raw` | | ✓ | |
+
+- **Shapes:** the outputs are typed (Pydantic), and amounts are always decimal strings. `request_refund`'s input schema has **no amount property**. An extra `amount` argument is ignored by the SDK, so it can never change the amount.
+- **`get_refund_status(ref)`** takes a `rf_…` ledger ID or a `hold_…` ID from **this session only**. Anything else gets the same "not found".
+- **Compat amounts** are strings: missing or empty → `MISSING_AMOUNT`; unparseable → `INVALID_AMOUNT`.
+- **Errors:**
+  - an unexpected executor error → *"The refund could not be confirmed. Do not retry it…"*, with no internals; the P5 sweeps recover the state;
+  - PayPal not configured → refund tools refuse, while reads still work (fail closed);
+  - no LLM configured → every automatic refund is HELD.
+- **DNS-rebinding protection** is on. Only `MCP_ALLOWED_HOSTS` and `MCP_ALLOWED_ORIGINS` are accepted (localhost by default); others get HTTP 421. P11 adds the Render host.
+- **Background sweep:** every 60 s, `expire_stale_holds()` and `recover_stuck()`.
+- **Trying it by hand:**
+  1. start `uvicorn wardlock.main:app --port 8000`;
+  2. open a session at `/docs`;
+  3. run `npx @modelcontextprotocol/inspector`, choose Streamable HTTP, URL `http://localhost:8000/mcp`, and add the header `Authorization: Bearer <session_token>`.
 
 ## 4. Handles
 

@@ -35,6 +35,11 @@ class Settings(BaseSettings):
     wardlock_service_key: SecretStr = SecretStr("")
     wardlock_admin_password: SecretStr = SecretStr("")
 
+    # Host and Origin headers the MCP endpoint accepts (DNS-rebinding protection).
+    # Add your Render host in P11, e.g. ["wardlock.onrender.com"].
+    mcp_allowed_hosts: list[str] = ["127.0.0.1:*", "localhost:*", "[::1]:*"]
+    mcp_allowed_origins: list[str] = ["http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*"]
+
     database_url: str = "sqlite:///./wardlock.db"
     session_ttl_minutes: int = 30
     hold_timeout_minutes: int = 15

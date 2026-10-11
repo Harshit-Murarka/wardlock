@@ -36,11 +36,10 @@ def engine():
 
 
 def client_for(engine, key=SERVICE_KEY):
-    app = create_app(engine=engine)
-    # _env_file=None: tests never read the developer's real .env.
-    app.dependency_overrides[get_settings] = lambda: Settings(
-        _env_file=None, wardlock_service_key=key, session_ttl_minutes=30
-    )
+    # _env_file=None: tests never read the developer's real .env (no PayPal or LLM keys here).
+    settings = Settings(_env_file=None, wardlock_service_key=key, session_ttl_minutes=30)
+    app = create_app(engine=engine, settings=settings, sweep_interval=None)
+    app.dependency_overrides[get_settings] = lambda: settings
     return TestClient(app)
 
 
