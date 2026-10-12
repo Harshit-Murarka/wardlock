@@ -38,8 +38,8 @@ class ReasonCheckResult:
 
 
 def build_prompt(reason_code: str, option_labels: Sequence[str], ticket_body: str) -> str:
-    options = "\n".join(f"- {_neutralise(label)}" for label in option_labels) or "- (none)"
-    body = _neutralise(ticket_body)[:MAX_TICKET_CHARS]
+    options = "\n".join(f"- {neutralise(label)}" for label in option_labels) or "- (none)"
+    body = neutralise(ticket_body)[:MAX_TICKET_CHARS]
     return (
         f"Refund reason: {reason_code}\n"
         f"Refund options chosen:\n{options}\n\n"
@@ -47,7 +47,7 @@ def build_prompt(reason_code: str, option_labels: Sequence[str], ticket_body: st
     )
 
 
-def _neutralise(text: str) -> str:
+def neutralise(text: str) -> str:
     # Break up the marker brackets, so a ticket can never close the untrusted block early
     # and pose as instructions outside it.
     return text.replace("<<<", "< < <").replace(">>>", "> > >")

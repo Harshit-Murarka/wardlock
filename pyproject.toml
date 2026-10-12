@@ -27,7 +27,7 @@ dev = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["wardlock*"]
+include = ["wardlock*", "demo_agent*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

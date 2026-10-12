@@ -297,6 +297,11 @@ class PayPalClient:
             )
             await self._sleep(delay)
 
+    async def access_token(self) -> str:
+        """A current OAuth access token. Only for the demo's config A (SPEC §14), which hands it
+        to PayPal's own MCP server as the "no Wardlock" baseline. Wardlock never uses it."""
+        return await self._get_token()
+
     async def _get_token(self) -> str:
         # The lock makes concurrent calls share a single token fetch instead of each fetching one.
         async with self._token_lock:

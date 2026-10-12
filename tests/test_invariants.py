@@ -4,6 +4,7 @@ import re
 from pathlib import Path
 
 PACKAGE = Path(__file__).resolve().parent.parent / "wardlock"
+DEMO = PACKAGE.parent / "demo_agent"
 
 # Invariant 1: only the PayPal client talks to PayPal. config.py may hold the URL constant.
 ALLOWED_TO_NAME_PAYPAL_HOSTS = {PACKAGE / "paypal" / "client.py", PACKAGE / "config.py"}
@@ -19,6 +20,29 @@ def test_only_the_paypal_client_knows_paypal_api_hosts():
         for path in PACKAGE.rglob("*.py")
         if path not in ALLOWED_TO_NAME_PAYPAL_HOSTS
         and PAYPAL_API_HOST.search(path.read_text(encoding="utf-8"))
+    ]
+    assert offenders == []
+
+
+def test_the_demo_agents_never_name_paypal_api_hosts():
+    """Config A refunds through PayPal's own MCP server; no demo code calls PayPal itself."""
+    assert [p.name for p in DEMO.rglob("*.py") if PAYPAL_API_HOST.search(p.read_text(encoding="utf-8"))] == []
+
+
+def test_config_c_and_the_attacker_reach_wardlock_only_through_its_api():
+    """They act as untrusted agents: /sessions and /mcp only, never Wardlock's money internals.
+
+    Only the orchestrator's config-A path may use the PayPal client (for an access token).
+    """
+    internals = ("wardlock.paypal", "wardlock.executor", "wardlock.handles", "wardlock.mcp_tools",
+                 "wardlock.sessions", "wardlock.engine")
+    allowed = {("orchestrator.py", "wardlock.paypal")}
+    offenders = [
+        (path.name, name)
+        for path in DEMO.rglob("*.py")
+        for name in internals
+        if re.search(rf"^\s*(from|import) {re.escape(name)}\b", path.read_text(encoding="utf-8"), re.MULTILINE)
+        and (path.name, name) not in allowed
     ]
     assert offenders == []
 

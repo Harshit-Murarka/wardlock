@@ -1,136 +1,23 @@
 """The agent-facing MCP tools (SPEC §3), driven through the real MCP protocol, in-process.
 
 The SDK's own client talks to our FastAPI app through httpx2.ASGITransport: initialize,
-list the tools, call them, all with the agent's Authorization header. PayPal is faked with respx.
+list the tools, call them, all with the agent's Authorization header. PayPal is faked with respx
+(the shared setup is in support.py, and the `wl` fixture in conftest.py).
 """
 
-import asyncio
 import json
 from contextlib import asynccontextmanager
-from datetime import date, datetime, timedelta, timezone
-from types import SimpleNamespace
+from datetime import timedelta
 
-import httpx
 import httpx2
 import pytest
-import respx
 from mcp.client.session import ClientSession
 from mcp.client.streamable_http import streamable_http_client
+from support import CAPTURES, NOW, running, start, token_for
 
-from wardlock.config import Settings, get_settings
-from wardlock.db import init_db, make_engine, make_session_factory
-from wardlock.engine.policy import load_policy
-from wardlock.enums import OrderStatus
-from wardlock.executor import Executor
-from wardlock.main import create_app
-from wardlock.mcp_tools import AUTH_ERROR, NOT_CONFIGURED, UNCONFIRMED, AgentServices
-from wardlock.models import Base, Customer, Order
-from wardlock.paypal.client import PayPalClient
-from wardlock.reason_check import ReasonCheckResult
+from wardlock.mcp_tools import AUTH_ERROR, NOT_CONFIGURED, UNCONFIRMED
+from wardlock.models import Base
 from wardlock.sessions import open_session
-
-SANDBOX = "https://api-m.sandbox.paypal.com"
-NOW = datetime(2026, 10, 9, 12, 0, tzinfo=timezone.utc)
-CAPTURES = ("CAPA1001", "CAPA1002", "CAPB2001")
-
-
-class Clock:
-    def __init__(self):
-        self.now = NOW
-
-    def __call__(self):
-        return self.now
-
-
-class FakePayPal:
-    def __init__(self):
-        self.calls = []
-
-    def refund(self, request, capture):
-        body = json.loads(request.content)
-        self.calls.append((capture, body))
-        return httpx.Response(201, json={"id": f"RF{len(self.calls)}", "status": "COMPLETED",
-                                         "amount": body["amount"], "custom_id": body.get("custom_id")})
-
-
-async def consistent(_reason, _labels, _body):
-    return ReasonCheckResult(True, "matches the ticket")
-
-
-def make_order(ref, customer, items, shipping, capture):
-    return Order(
-        customer_id=customer, order_ref=ref, status=OrderStatus.DELIVERED, placed_at=date(2026, 9, 20),
-        paypal_order_id=f"PO{capture}", capture_id=capture, currency="USD",
-        captured_minor=sum(u * q for _r, _n, u, q in items) + shipping,
-        items_json=[{"item_ref": r, "name": n, "unit_minor": u, "quantity": q} for r, n, u, q in items],
-        shipping_minor=shipping, captured_at=NOW - timedelta(days=5),
-    )
-
-
-@asynccontextmanager
-async def running(app):
-    """Run the app's lifespan in ONE background task. The MCP session manager uses an anyio task
-    group, which must be entered and exited by the same task, and pytest-asyncio runs fixture
-    setup and teardown in different tasks."""
-    started, stop = asyncio.Event(), asyncio.Event()
-
-    async def lifespan():
-        async with app.router.lifespan_context(app):
-            started.set()
-            await stop.wait()
-
-    task = asyncio.create_task(lifespan())
-    await started.wait()
-    try:
-        yield app
-    finally:
-        stop.set()
-        await task
-
-
-async def start(engine, factory, executor, clock):
-    services = AgentServices(factory, load_policy(), executor, clock=clock)
-    settings = Settings(_env_file=None, wardlock_service_key="svc")
-    app = create_app(engine=engine, services=services, settings=settings, sweep_interval=None)
-    app.dependency_overrides[get_settings] = lambda: settings
-    return app
-
-
-@pytest.fixture
-async def wl():
-    engine = make_engine("sqlite://")
-    init_db(engine)
-    factory = make_session_factory(engine)
-    with factory() as db, db.begin():
-        db.add_all([Customer(id="cust_ana", first_name="Ana", email="ana@example.com"),
-                    Customer(id="cust_ben", first_name="Ben", email="ben@example.com")])
-        db.flush()
-        db.add_all([
-            make_order("A-1001", "cust_ana", [("bell", "Bike bell", 400, 1), ("cage", "Bottle cage", 799, 2)],
-                       650, "CAPA1001"),
-            make_order("A-1002", "cust_ana", [("helmet", "Commuter helmet", 17900, 1)], 1000, "CAPA1002"),
-            make_order("B-2001", "cust_ben", [("seatpost", "Carbon seatpost", 17900, 1)], 1000, "CAPB2001"),
-        ])
-    fake, clock = FakePayPal(), Clock()
-
-    async def no_sleep(_seconds):
-        pass
-
-    with respx.mock(base_url=SANDBOX, assert_all_called=False) as router:
-        router.post("/v1/oauth2/token").respond(200, json={"access_token": "tok", "expires_in": 3600})
-        router.post(path__regex=r"^/v2/payments/captures/(?P<capture>[A-Z0-9]+)/refund$").mock(side_effect=fake.refund)
-        async with PayPalClient(SANDBOX, "id", "secret", sleep=no_sleep) as paypal:
-            executor = Executor(factory, paypal, load_policy(), consistent, clock=clock)
-            app = await start(engine, factory, executor, clock)
-            async with running(app):
-                yield SimpleNamespace(app=app, factory=factory, fake=fake, clock=clock, engine=engine)
-    engine.dispose()
-
-
-def token_for(wl, customer="cust_ana"):
-    with wl.factory() as db, db.begin():
-        return open_session(db, ticket_id="T-1", customer_id=customer, ticket_body="My bike bell arrived scratched.",
-                            ttl_minutes=30, now=NOW).token
 
 
 @asynccontextmanager
