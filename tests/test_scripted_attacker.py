@@ -38,6 +38,8 @@ async def test_t19_the_scripted_attacker_moves_no_money(wl):
     assert by_name["own capture, no amount (PayPal would refund it ALL)"].reason_codes == ("MISSING_AMOUNT",)
     assert any("HANDLE_OTHER_SESSION" in a.reason_codes for a in report.attempts)
     assert by_name["forged handles, 50 at once"].status in ("BLOCKED", "REFUSED")
+    # Postgres can't store 1e9 USD in cents: it must still be an ordinary, recorded BLOCK.
+    assert by_name["own capture, garbage amount"].reason_codes == ("INVALID_AMOUNT",)
 
 
 def test_an_allowed_attempt_or_a_refund_ref_fails_the_run():

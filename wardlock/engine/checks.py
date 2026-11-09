@@ -17,6 +17,10 @@ from wardlock.engine.types import DecisionInputs, HandleView, OrderView, RefundR
 from wardlock.enums import HandleKind, HandleState, SessionStatus
 from wardlock.money import to_minor
 
+# The largest amount any money column can store (Postgres INTEGER, about 21.4 million USD).
+# A raw amount above it is invalid: it could not even be written to the audit log.
+MAX_AMOUNT_MINOR = 2_147_483_647
+
 MAX_HANDLES_PER_REQUEST = 10
 # PayPal only allows refunds within 180 days of the capture. This is PayPal's rule,
 # not a merchant policy, so it is a constant here and not in policy.yaml.
@@ -192,7 +196,7 @@ def check_compat_amount(f: Facts) -> list[Code]:
     if r.raw_amount is None:
         return [Code.MISSING_AMOUNT]
     try:
-        valid = to_minor(r.raw_amount, r.raw_currency) > 0  # raises for bad values or currencies
+        valid = 0 < to_minor(r.raw_amount, r.raw_currency) <= MAX_AMOUNT_MINOR  # raises for bad values
     except (ValueError, TypeError):
         valid = False
     order = f.inputs.orders.get(r.raw_capture_id or "")

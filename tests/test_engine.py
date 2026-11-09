@@ -184,6 +184,12 @@ COMPAT_CASES = [
     pytest.param(dict(amount=Decimal("0")), B, [Code.INVALID_AMOUNT], id="zero amount"),
     pytest.param(dict(amount=Decimal("4.001")), B, [Code.INVALID_AMOUNT], id="too many decimals"),
     pytest.param(dict(amount=4.0), B, [Code.INVALID_AMOUNT], id="a float is never an amount"),
+    pytest.param(dict(amount=Decimal("1e9")), B, [Code.INVALID_AMOUNT],
+                 id="too large to store (Postgres INTEGER): invalid, not a crash"),
+    pytest.param(dict(amount=Decimal("21474836.48")), B, [Code.INVALID_AMOUNT], id="one cent above the storable maximum"),
+    pytest.param(dict(amount=Decimal("21474836.47")), B,
+                 [Code.EXCEEDS_REFUNDABLE, Code.OVER_AUTO_LIMIT, Code.AMOUNT_NOT_DERIVABLE],
+                 id="the storable maximum itself is a normal (far too large) amount"),
     pytest.param(dict(amount=Decimal("30.00")), B, [Code.EXCEEDS_REFUNDABLE, Code.AMOUNT_NOT_DERIVABLE],
                  id="more than remaining and not an option"),
     pytest.param(dict(capture="CAP_A1002", amount=Decimal("189.00"), reason=ReasonCode.NOT_RECEIVED), H,
@@ -197,6 +203,13 @@ COMPAT_CASES = [
 def test_request_refund_raw(kwargs, verdict, codes):
     decision = run_raw(**kwargs)
     assert (decision.verdict, list(decision.reason_codes)) == (verdict, codes)
+
+
+def test_an_unstorable_compat_amount_is_never_carried_into_the_decision():
+    """The decision row must always be writable, so the attempt is on record (Postgres INTEGER)."""
+    for amount in (Decimal("1e9"), Decimal("21474836.48")):
+        assert run_raw(amount=amount).amount_minor is None
+    assert run_raw(amount=Decimal("21474836.47")).amount_minor == 2_147_483_647
 
 
 def test_compat_never_records_another_customers_capture_as_the_target():

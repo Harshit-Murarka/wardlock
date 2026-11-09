@@ -8,6 +8,8 @@ from datetime import date, datetime, timedelta, timezone
 import pytest
 from sqlalchemy import select
 
+from support import fresh_engine
+
 from wardlock.db import init_db, make_engine, make_session_factory
 from wardlock.handles import (
     MAX_HANDLES_PER_REQUEST,
@@ -54,7 +56,7 @@ def make_order(ref, customer, items, shipping_minor, capture_id, placed=date(202
 @pytest.fixture
 def db():
     """The real demo shapes from seed/orders.json, with fake capture ids."""
-    engine = make_engine("sqlite://")
+    engine = fresh_engine()
     init_db(engine)
     with make_session_factory(engine)() as session:
         for customer_id, name in [("cust_ana", "Ana"), ("cust_ben", "Ben"), ("cust_chen", "Chen")]:

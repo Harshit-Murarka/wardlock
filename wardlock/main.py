@@ -54,6 +54,24 @@ class _LateMount:
         await self.app(scope, receive, send)
 
 
+class _RejectNulInUrl:
+    """400 for any URL whose path or query contains a NUL character.
+
+    Postgres text can't hold NUL, so an id like /admin/api/holds/hold_%00 would otherwise
+    turn into a database error (500). No real Wardlock URL contains one.
+    """
+
+    def __init__(self, app) -> None:
+        self.app = app
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] == "http" and ("\x00" in scope.get("path", "")
+                                        or b"%00" in scope.get("query_string", b"")):
+            await PlainTextResponse("bad request", status_code=400)(scope, receive, send)
+            return
+        await self.app(scope, receive, send)
+
+
 def create_app(
     engine: Engine | None = None,
     services: AgentServices | None = None,
@@ -105,6 +123,7 @@ def create_app(
         app.add_api_route("/console", lambda: RedirectResponse("/console/"), methods=["GET"], include_in_schema=False)
         app.mount("/console", StaticFiles(directory=CONSOLE_DIST, html=True), name="console")
     app.mount("/", mcp_mount)  # after the routes above, so /health and /sessions match first
+    app.add_middleware(_RejectNulInUrl)
     return app
 
 

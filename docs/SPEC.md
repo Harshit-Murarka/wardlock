@@ -1,5 +1,8 @@
-# Wardlock — Technical Spec (narrowed scope) · v1.12 · Nov 9, 2026
+# Wardlock — Technical Spec (narrowed scope) · v1.13 · Nov 9, 2026
 
+> v1.13 changes:
+> - §5: a compat amount above 21,474,836.47 (the largest amount a Postgres INTEGER money column holds) is `INVALID_AMOUNT`, found by the live T19 run on Render.
+>
 > v1.12 changes:
 > - §4: per-unit options for multi-unit lines ("Bottle cage x1 (of 2)"); an item can be refunded unit by unit, never beyond its quantity; one option per item per request.
 >
@@ -275,6 +278,8 @@ reason_allows:
 7. **The window (#8) is inclusive:** ≤ 180 days. It's a constant, because it's PayPal's rule.
 8. **Missing order data for a known handle → HOLD `DEPENDENCY_UNAVAILABLE` (#13).** As a last guard, an otherwise clean decision that lacks an amount or a capture also holds.
 9. **Codes are listed in table order,** with the compat codes in their natural place: `MISSING_AMOUNT`/`INVALID_AMOUNT` after `NOT_OWNER`, and `AMOUNT_NOT_DERIVABLE` before #13. Each code has a plain-words explanation in `engine/codes.py`.
+
+**Amount cap (v1.13).** A compat amount above `MAX_AMOUNT_MINOR` = 2,147,483,647 minor units (21,474,836.47 USD) is `INVALID_AMOUNT`, and the decision stores no amount. Every money column is a Postgres `INTEGER`, so a larger value could not even be written to the audit log. The live T19 run on Render found this: `1e9` made the decision insert fail. SQLite has no such limit. Handle amounts come from real captures, so they are always far below the cap.
 
 ## 6. Executor
 

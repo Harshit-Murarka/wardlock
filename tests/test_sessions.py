@@ -7,6 +7,8 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
+from support import fresh_engine
+
 from wardlock.config import Settings, get_settings
 from wardlock.db import init_db, make_engine, make_session_factory
 from wardlock.handles import mint_handles
@@ -21,7 +23,7 @@ BODY = {"ticket_id": "T-0001", "customer_id": "cust_ana", "ticket_body": "My bik
 
 @pytest.fixture
 def engine():
-    engine = make_engine("sqlite://")
+    engine = fresh_engine()
     init_db(engine)
     with make_session_factory(engine)() as db, db.begin():
         db.add(Customer(id="cust_ana", first_name="Ana", email="ana@example.com"))

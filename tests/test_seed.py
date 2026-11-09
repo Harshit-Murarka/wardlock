@@ -12,6 +12,8 @@ import pytest
 import respx
 from sqlalchemy import select
 
+from support import fresh_engine
+
 from wardlock.db import init_db, make_engine, make_session_factory
 from wardlock.models import Order
 from wardlock.paypal.client import LIVE_BASE_URL, PayPalClient
@@ -134,7 +136,7 @@ def fake():
 
 
 def make_db():
-    engine = make_engine("sqlite://")
+    engine = fresh_engine()
     init_db(engine)
     return engine, make_session_factory(engine)
 

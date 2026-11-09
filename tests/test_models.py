@@ -6,6 +6,8 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError, StatementError
 
+from support import fresh_engine
+
 from wardlock.db import init_db, make_engine, make_session_factory
 from wardlock.models import (
     AgentSession,
@@ -30,7 +32,7 @@ NOW = datetime(2026, 10, 7, 12, 0, tzinfo=timezone.utc)
 
 @pytest.fixture
 def db():
-    engine = make_engine("sqlite://")
+    engine = fresh_engine()
     init_db(engine)
     with make_session_factory(engine)() as session:
         yield session
@@ -222,7 +224,7 @@ def test_unknown_enum_values_are_rejected_by_the_database(db):
     with pytest.raises(IntegrityError):
         db.execute(text(
             "INSERT INTO alerts (id, kind, details_json, created_at, acknowledged) "
-            "VALUES ('alr_x', 'NOT_A_KIND', '{}', '2026-10-07 12:00:00', 0)"
+            "VALUES ('alr_x', 'NOT_A_KIND', '{}', '2026-10-07 12:00:00', FALSE)"  # FALSE: valid in SQLite and Postgres
         ))
 
 

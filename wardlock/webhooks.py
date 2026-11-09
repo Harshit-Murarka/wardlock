@@ -111,6 +111,8 @@ async def _read_capped(request: Request) -> bytes:
 
 def _parse(raw: bytes) -> dict[str, Any] | None:
     """The event as a dict with a usable id and type, or None. Used only to route the event."""
+    if b"\x00" in raw or rb"\u0000" in raw:  # a raw NUL, or JSON's escaped form of it
+        return None  # PayPal never sends NUL, and Postgres can't store it: not a PayPal event
     try:
         event = json.loads(raw)
     except (ValueError, UnicodeDecodeError):

@@ -74,13 +74,18 @@ Then:
    ```bash
    python -m demo_agent.orchestrator demo_agent/tickets/T-0001.json
    ```
-5. **Run the scripted attacker** (36 attack attempts). It expects `PASS: ... 0 allowed`:
+5. **Run the scripted attacker** (38 attack attempts). It expects `PASS: ... 0 allowed`:
    ```bash
    python -m demo_agent.scripted_attacker
    ```
 6. **Run the tests.** They need no network:
    ```bash
    pytest -q
+   ```
+   They use SQLite by default. To run the same suite on Postgres, as on Render, point
+   `WARDLOCK_TEST_DATABASE_URL` at a **throwaway** database; every test empties it first:
+   ```bash
+   WARDLOCK_TEST_DATABASE_URL=postgresql://user:pass@localhost/wardlock_test pytest -q
    ```
 
 ## For judges: trying it in the PayPal sandbox

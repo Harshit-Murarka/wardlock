@@ -10,6 +10,8 @@ import pytest
 import respx
 from sqlalchemy import func, select
 
+from support import fresh_engine
+
 from wardlock.db import init_db, make_engine, make_session_factory
 from wardlock.engine.policy import load_policy
 from wardlock.enums import HandleKind, HandleState, HoldStatus, OrderStatus, ReasonCode, Verdict
@@ -97,7 +99,7 @@ def make_order(ref, customer, items, shipping, capture):
 
 @pytest.fixture
 async def env():
-    engine = make_engine("sqlite://")
+    engine = fresh_engine()
     init_db(engine)
     factory = make_session_factory(engine)
     with factory() as db, db.begin():

@@ -19,7 +19,7 @@ from datetime import datetime, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -27,6 +27,7 @@ from wardlock.config import Settings, get_settings
 from wardlock.db import get_db
 from wardlock.handles import expire_available_handles
 from wardlock.models import AgentSession, Customer, SessionStatus, utcnow
+from wardlock.text import no_nul
 
 # Ticket bodies are untrusted text. Capping them keeps a hostile ticket from filling the database.
 MAX_TICKET_BODY_CHARS = 50_000
@@ -104,8 +105,9 @@ class OpenSessionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     ticket_id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")
-    customer_id: str = Field(min_length=1, max_length=64)  # from ticket METADATA only
-    ticket_body: str = Field(max_length=MAX_TICKET_BODY_CHARS)  # untrusted
+    # AfterValidator(no_nul): Postgres text can't hold NUL. An unknown id then simply gets 404.
+    customer_id: Annotated[str, Field(min_length=1, max_length=64), AfterValidator(no_nul)]  # METADATA only
+    ticket_body: Annotated[str, Field(max_length=MAX_TICKET_BODY_CHARS), AfterValidator(no_nul)]  # untrusted
 
 
 class OpenSessionResponse(BaseModel):

@@ -6,8 +6,7 @@ services:
     name: wardlock
     runtime: python
     plan: free
-    # VERIFY: Render's Python build image ships Node.js for the console build. If the build
-    # says "npm: command not found", remove the npm part and the console is simply not served.
+    # Render's Python build image ships Node.js, so the console builds here (confirmed Nov 9, 2026).
     buildCommand: pip install . && npm ci --prefix console && npm run build --prefix console
     startCommand: uvicorn wardlock.main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health

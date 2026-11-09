@@ -6,6 +6,7 @@ orders, and PayPal faked with respx. Imported by conftest.py and the tests.
 
 import asyncio
 import json
+import os
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -20,10 +21,24 @@ from wardlock.enums import OrderStatus
 from wardlock.executor import Executor
 from wardlock.main import create_app
 from wardlock.mcp_tools import AgentServices
-from wardlock.models import Customer, Order
+from wardlock.models import Base, Customer, Order
 from wardlock.paypal.client import PayPalClient
 from wardlock.reason_check import ReasonCheckResult
 from wardlock.sessions import open_session
+
+# Set WARDLOCK_TEST_DATABASE_URL to a THROWAWAY Postgres database to run the suite against
+# Postgres (as on Render). Every test then starts by dropping all tables in it.
+TEST_DATABASE_URL = os.environ.get("WARDLOCK_TEST_DATABASE_URL", "")
+
+
+def fresh_engine():
+    """An empty database for one test: in-memory SQLite, or the test Postgres database."""
+    if not TEST_DATABASE_URL:
+        return make_engine("sqlite://")
+    engine = make_engine(TEST_DATABASE_URL)
+    Base.metadata.drop_all(engine)
+    return engine
+
 
 SERVICE_KEY = "svc"
 WEBHOOK_ID = "WH-TEST-1"
@@ -110,7 +125,7 @@ async def start(engine, factory, executor, clock, *, paypal=None):
 
 @asynccontextmanager
 async def in_process_wardlock():
-    engine = make_engine("sqlite://")
+    engine = fresh_engine()
     init_db(engine)
     factory = make_session_factory(engine)
     with factory() as db, db.begin():

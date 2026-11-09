@@ -21,7 +21,7 @@ from wardlock.models import Base
 def postgres_url(url: str) -> str:
     """Render (and Heroku-style hosts) give `postgres://...`; SQLAlchemy needs a driver name.
 
-    # VERIFY: Postgres is not tested locally (only SQLite is); check the first Render deploy.
+    Confirmed (Nov 9, 2026): the full test suite passes on Postgres 16, and the Render deploy runs on it.
     """
     for prefix in ("postgres://", "postgresql://"):
         if url.startswith(prefix):

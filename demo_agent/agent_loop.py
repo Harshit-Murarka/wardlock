@@ -165,7 +165,7 @@ def inline_refs(schema: dict[str, Any]) -> dict[str, Any]:
 
     Pydantic schemas put enums such as ReasonCode in $defs. Some OpenAI-compatible APIs
     (Gemini's, at least) reject $ref in tool parameters.
-    # VERIFY: confirm against a real Gemini call once an LLM key is set.
+    Confirmed with real Gemini calls (Nov 2026): inlined schemas are accepted.
     """
     defs = schema.get("$defs", {})
 

@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import datetime
 
-from wardlock.engine.checks import COMPAT_CHECKS, HANDLE_CHECKS, Facts
+from wardlock.engine.checks import COMPAT_CHECKS, HANDLE_CHECKS, MAX_AMOUNT_MINOR, Facts
 from wardlock.engine.codes import BLOCK_CODES, HOLD_CODES, Code
 from wardlock.engine.policy import Policy
 from wardlock.engine.types import Decision, DecisionInputs, RefundRequest
@@ -116,4 +116,4 @@ def _raw_amount(request: RefundRequest, order) -> int | None:
         minor = to_minor(request.raw_amount, order.currency)
     except (ValueError, TypeError):
         return None
-    return minor if minor > 0 else None
+    return minor if 0 < minor <= MAX_AMOUNT_MINOR else None  # too large to store = invalid

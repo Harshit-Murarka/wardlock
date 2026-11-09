@@ -30,6 +30,7 @@ from wardlock.models import AgentSession, Customer, Decision, Hold, LedgerEntry,
 from wardlock.money import from_minor
 from wardlock.paypal.client import PayPalClient
 from wardlock.sessions import resolve_session
+from wardlock.text import no_nul
 
 logger = logging.getLogger(__name__)
 
@@ -185,7 +186,7 @@ def build_mcp_server(get_services: Callable[[], AgentServices]) -> MCPServer:
         services = get_services()
         session_id = _authenticate(services, ctx)
         with services.session_factory() as db:
-            status = _refund_status(db, session_id, ref)
+            status = _refund_status(db, session_id, no_nul(ref))
         if status is None:
             # Same answer for "doesn't exist" and "belongs to another conversation".
             raise ToolError("No refund or hold with that reference in this conversation.")
@@ -213,7 +214,8 @@ def build_mcp_server(get_services: Callable[[], AgentServices]) -> MCPServer:
         executor = _executor(services)
         capture_id = _scrub(capture_id, _bearer_token(ctx))  # amount and currency are too short to hold a token
         try:
-            outcome = await executor.request_refund_raw(session_id, capture_id, _parse_amount(amount), currency,
+            outcome = await executor.request_refund_raw(session_id, capture_id, _parse_amount(amount),
+                                                        no_nul(currency) if currency is not None else None,
                                                         reason_code)
         except Exception:
             logger.exception("request_refund_raw failed unexpectedly")
@@ -266,6 +268,7 @@ def _scrub(text: str, token: str | None) -> str:
     Wardlock stores only the token's hash. An agent that pastes the token into a field must
     not undo that: the text goes into the audit log, and a note even goes to PayPal.
     """
+    text = no_nul(text)  # Postgres text can't hold NUL: it must never reach a query
     return text.replace(token, REDACTED) if token else text
 
 
