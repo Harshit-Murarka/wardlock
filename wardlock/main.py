@@ -18,7 +18,7 @@ from typing import Any
 from fastapi import FastAPI
 from mcp.server.transport_security import TransportSecuritySettings
 from sqlalchemy import Engine
-from starlette.responses import PlainTextResponse, RedirectResponse
+from starlette.responses import HTMLResponse, PlainTextResponse, RedirectResponse
 from starlette.staticfiles import StaticFiles
 
 from wardlock import admin, sessions, webhooks
@@ -26,6 +26,7 @@ from wardlock.config import Settings, get_settings
 from wardlock.db import get_engine, init_db, make_session_factory
 from wardlock.engine.policy import load_policy
 from wardlock.executor import Executor
+from wardlock.landing import LANDING_HTML
 from wardlock.llm import LLMClient
 from wardlock.mcp_tools import AgentServices, build_mcp_server
 from wardlock.paypal.client import PayPalClient
@@ -119,6 +120,7 @@ def create_app(
     app.include_router(webhooks.router)
     app.include_router(admin.router)
     app.add_api_route("/health", health, methods=["GET"])
+    app.add_api_route("/", landing, methods=["GET"], include_in_schema=False)
     if CONSOLE_DIST.is_dir():  # the merchant console (P9); its API calls need the admin password
         app.add_api_route("/console", lambda: RedirectResponse("/console/"), methods=["GET"], include_in_schema=False)
         app.mount("/console", StaticFiles(directory=CONSOLE_DIST, html=True), name="console")
@@ -160,6 +162,11 @@ def health() -> dict[str, str]:
     process up?", not "is every dependency healthy?".
     """
     return {"status": "ok"}
+
+
+def landing() -> HTMLResponse:
+    """A static page saying what this server is, so the bare URL isn't a 404."""
+    return HTMLResponse(LANDING_HTML)
 
 
 app = create_app()

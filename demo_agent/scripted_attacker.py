@@ -28,7 +28,7 @@ from typing import Any
 import httpx2
 
 from demo_agent.agent_c import wardlock_session
-from demo_agent.orchestrator import DEFAULT_URL, OrchestratorError, open_session
+from demo_agent.orchestrator import DEFAULT_URL, OrchestratorError, open_session, wake_up
 from demo_agent.tickets import Ticket, TicketMetadata
 from wardlock.money import from_minor
 
@@ -216,6 +216,11 @@ async def main(argv: list[str] | None = None) -> int:
         targets = load_targets(args.orders, args.state)
     except (OSError, ValueError, KeyError) as exc:
         print(f"Could not read the seeded captures: {exc}", file=sys.stderr)
+        return 2
+    try:
+        await wake_up(args.url)
+    except OrchestratorError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
         return 2
     before = ledger_count(settings.database_url)
     try:

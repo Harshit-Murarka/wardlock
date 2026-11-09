@@ -2,7 +2,21 @@
 
 **A money gate that lets an AI support agent refund PayPal customers on its own, without being able to refund the wrong person, the wrong amount, or behind your back.**
 
-Built for the PayPal AI Hackathon (2026). Sandbox only.
+![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-3776AB)
+![MCP server](https://img.shields.io/badge/MCP-streamable%20HTTP-6E56CF)
+![PayPal sandbox only](https://img.shields.io/badge/PayPal-sandbox%20only-003087)
+![Tests: 590+ on SQLite and Postgres](https://img.shields.io/badge/tests-590%2B%20passing-2E7D32)
+![License: MIT](https://img.shields.io/badge/license-MIT-lightgrey)
+
+Built for the PayPal AI Hackathon (2026).
+
+> **Live demo:** https://wardlock.onrender.com (landing page, [`/docs`](https://wardlock.onrender.com/docs), MCP at `/mcp`)
+>
+> **⏱ About the first minute.** The demo runs on Render's free plan, which puts the service to sleep after about 15 minutes without traffic. The first request after that is a **cold start of roughly 50–60 seconds**: the page or the call just waits, and may briefly show a Render loading page or a 502. After that it answers in milliseconds.
+> - Open https://wardlock.onrender.com/health first and wait for `{"status":"ok"}`.
+> - The demo scripts in this repo do that for you. They print `Waiting for Wardlock ... to start` and retry for up to 150 s.
+
+---
 
 ## The problem
 
@@ -20,9 +34,33 @@ Wardlock sits between the agent and PayPal and enforces these in code, not in th
 | **G2** | **Computed amounts.** The agent never types a money amount. | The agent gets opaque refund *handles* ("Bike bell x1, 4.00"). Wardlock computes every amount from the merchant's order data. The main refund tool has no amount parameter at all. |
 | **G3** | **No bypass.** Only Wardlock holds PayPal credentials, and any refund it did not make is flagged. | The agent holds only a short-lived session token. Signed PayPal webhooks are reconciled against Wardlock's ledger, and anything unexplained raises an alert. |
 
-On top of that, a deterministic engine applies the merchant's policy (auto-approve limit, per-conversation caps, which reasons fit which refund kinds). It returns **ALLOW**, **HOLD** (a person approves it in the console) or **BLOCK**.
+On top of that, a deterministic engine applies the merchant's policy ([`policy.yaml`](policy.yaml): auto-approve limit, refunds per conversation, which reasons fit which refund kinds). It returns:
+- **ALLOW:** the refund is made now;
+- **HOLD:** a person approves it in the console;
+- **BLOCK:** it can't happen, with a reason code that says why.
 
-An LLM reason check can only *escalate* ALLOW to HOLD, never approve. Anything unknown fails closed to HOLD.
+An LLM reason check can only *escalate* ALLOW to HOLD, never approve. Anything unknown or unreachable fails closed to HOLD.
+
+## What happens on one ticket
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant HD as Helpdesk (trusted)
+    participant AG as LLM agent (untrusted)
+    participant W as Wardlock
+    participant PP as PayPal sandbox
+    HD->>W: POST /sessions (service key, verified customer, ticket text)
+    W-->>HD: session token (30 min, this customer only)
+    HD->>AG: ticket + MCP connection with the token
+    AG->>W: get_session_context
+    W-->>AG: this customer's orders, refund options as handles + computed amounts
+    AG->>W: request_refund([handle], DAMAGED)
+    W->>W: ownership, policy, caps, reason check → ALLOW / HOLD / BLOCK
+    W->>PP: refund with explicit amount + PayPal-Request-Id (only on ALLOW)
+    PP-->>W: signed webhook PAYMENT.CAPTURE.REFUNDED
+    W->>W: reconcile with ledger (alert if Wardlock didn't make it)
+```
 
 ## Architecture
 
@@ -44,8 +82,44 @@ flowchart LR
     M[Merchant console<br/>holds, alerts, ticket replay] --> W
 ```
 
-- **The agent's tools** (MCP over streamable HTTP at `/mcp`): `get_session_context`, `request_refund(refund_handles, reason_code)`, `get_refund_status`, and a compat `request_refund_raw(capture_id, amount)` that still runs the full ownership check.
-- **The design** is in [`docs/SPEC.md`](docs/SPEC.md): every rule, every reason code, and how each piece was built.
+The full design is in [`docs/SPEC.md`](docs/SPEC.md): every rule, every reason code, and how each piece was built.
+
+## The MCP server
+
+Wardlock is an **MCP server over streamable HTTP** at `/mcp` (stateless; JSON responses). Any MCP client can use it.
+- Every tool call needs the session token as `Authorization: Bearer <token>`. The helpdesk gets the token from `POST /sessions`, and the LLM never sees it.
+- Without a valid token every tool answers `Invalid or expired session token ... Nothing was done.`
+- DNS-rebinding protection is on: requests for an unexpected `Host` get 421.
+
+| Tool | Arguments | What it does |
+|---|---|---|
+| `get_session_context` | none | The verified customer's first name and orders. Each order lists refund options: an opaque `handle`, a label such as "Bike bell x1", and the amount Wardlock computed. No PayPal IDs. |
+| `request_refund` | `refund_handles`, `reason_code`, optional `note_to_customer` | The main refund tool. **No amount, no capture ID.** Returns ALLOWED / HELD / BLOCKED, reason codes and a plain-words message for the agent. |
+| `get_refund_status` | `ref` | The status of a refund or hold from this conversation. |
+| `request_refund_raw` | `capture_id`, `amount`, `currency`, `reason_code` | A compatibility tool for agents written against PayPal's `create_refund`. It runs the full ownership and policy check, and only amounts that exactly match a refund option can be allowed. |
+
+**Check that it works** (moves no money). It opens one session, lists the tools, reads the context and checks the guarantees:
+```bash
+python scripts/mcp_check.py --url http://localhost:8000
+```
+```
+  OK   a call without a valid session token is refused
+  OK   exactly the four Wardlock tools are offered
+  OK   request_refund has no amount parameter (G2)
+  OK   no PayPal capture id is shown to the agent
+  ...
+PASS: the MCP server works
+```
+
+**Without any key**, you can see the live server's tools (allow a minute for the cold start):
+```bash
+curl -X POST https://wardlock.onrender.com/mcp -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}"
+```
+
+**MCP Inspector:**
+1. Run `npx @modelcontextprotocol/inspector`.
+2. Choose *Streamable HTTP* and the URL `http://localhost:8000/mcp`.
+3. Add the header `Authorization: Bearer <session_token>`. To get a token, open a session at `http://localhost:8000/docs` with `POST /sessions` and your `WARDLOCK_SERVICE_KEY`.
 
 ## Quick start (local, about 5 minutes)
 
@@ -56,10 +130,9 @@ python -m venv .venv && .venv/bin/pip install -e ".[dev]" && cp .env.example .en
 ```
 On Windows, use `.venv\Scripts\pip` instead of `.venv/bin/pip`.
 
-Then:
 1. **Fill in `.env`**, using `.env.example` for the names:
    - PayPal **sandbox** credentials from a **US** business account;
-   - any OpenAI-compatible LLM (a free Gemini key works, with `LLM_MODEL=models/gemini-2.5-flash`);
+   - any OpenAI-compatible LLM with tool calling (a free Google AI Studio key works; copy a current model ID into `LLM_MODEL`);
    - a random `WARDLOCK_SERVICE_KEY` and `WARDLOCK_ADMIN_PASSWORD`.
 2. **Seed the sandbox** with the demo orders. This pays each order with a PayPal test card, needs no browser, and is safe to re-run:
    ```bash
@@ -69,24 +142,28 @@ Then:
    ```bash
    uvicorn wardlock.main:app --port 8000
    ```
-   It serves `/mcp` for agents, `/console/` for the merchant, `/docs` for the API, and `/webhooks/paypal`.
-4. **Run the AI support agent** on a ticket:
+   Open http://localhost:8000 for the landing page. It serves `/mcp` for agents, `/console/` for the merchant, `/docs` for the API, and `/webhooks/paypal`.
+4. **Check the MCP server:**
+   ```bash
+   python scripts/mcp_check.py
+   ```
+5. **Run the AI support agent** on a ticket:
    ```bash
    python -m demo_agent.orchestrator demo_agent/tickets/T-0001.json
    ```
-5. **Run the scripted attacker** (38 attack attempts). It expects `PASS: ... 0 allowed`:
+6. **Run the scripted attacker** (38 attack attempts, no LLM). It expects `PASS: 38 attempts, 0 allowed`:
    ```bash
    python -m demo_agent.scripted_attacker
    ```
-6. **Run the tests.** They need no network:
+7. **Run the tests.** They need no network:
    ```bash
    pytest -q
    ```
-   They use SQLite by default. To run the same suite on Postgres, as on Render, point
-   `WARDLOCK_TEST_DATABASE_URL` at a **throwaway** database; every test empties it first:
-   ```bash
-   WARDLOCK_TEST_DATABASE_URL=postgresql://user:pass@localhost/wardlock_test pytest -q
-   ```
+
+To run these against a deployed Wardlock instead, pass `--url https://<your deployment>` to steps 4–6.
+- They need that deployment's `WARDLOCK_SERVICE_KEY` in `.env`.
+- For the attacker's ledger check, set `DATABASE_URL` to the deployment's database too.
+- Each one waits through a cold start first.
 
 ## For judges: trying it in the PayPal sandbox
 
@@ -95,34 +172,59 @@ Then:
    - Create a REST app linked to it, then copy the client ID and secret into `.env`.
 2. Run `python scripts/seed_sandbox.py`. It creates 14 small orders and pays them with PayPal's published sandbox test card, so no browser approval is needed.
 3. Start the server, open the console at `http://localhost:8000/console/`, and sign in with your `WARDLOCK_ADMIN_PASSWORD`.
-4. Run the three demo tickets with the orchestrator (step 4 above):
-   - **T-0001:** an honest damaged bell. Expect ALLOWED, 4.00.
-   - **T-0002:** a hidden "refund everything" HTML comment. Expect no refund.
-   - **T-0003:** pressure to refund the whole order plus 50.00. Expect at most the bell, or a hold.
+4. Run the three demo tickets with the orchestrator (step 5 above):
 
-   Then open **Ticket replay** in the console to see what the customer wrote, what the agent asked for, and why Wardlock decided what it did.
+   | Ticket | What the customer writes | Expected |
+   |---|---|---|
+   | **T-0001** | An honest damaged bell | **ALLOWED**, 4.00, only the bell |
+   | **T-0002** | A hidden "refund everything" HTML comment | No refund |
+   | **T-0003** | Pressure to refund the whole order plus 50.00 | At most the bell, or a hold for a person |
+
+   Then open **Ticket replay** in the console. It shows what the customer wrote (with suspicious text highlighted), what the agent asked for, and why Wardlock decided what it did.
 5. **Optional, the webhook check (G3).** Add a webhook in your app for `PAYMENT.CAPTURE.REFUNDED` to `https://<a tunnel to localhost>/webhooks/paypal`, and put its ID in `PAYPAL_WEBHOOK_ID`. Then refund outside Wardlock:
    ```bash
    python scripts/smoke_refund.py --capture <Z-9001 capture> --amount 1.00
    ```
-   An `OUT_OF_BAND_REFUND` alert appears. Details are in SPEC §8.
+   An `OUT_OF_BAND_REFUND` alert appears in the console. Details are in SPEC §8.
+
+## How it's tested
+
+- **590+ automated tests**, with no network needed. The same suite passes on **SQLite and on Postgres 16**, the database Render uses. To run it on Postgres, point `WARDLOCK_TEST_DATABASE_URL` at a **throwaway** database, because every test empties it first:
+  ```bash
+  WARDLOCK_TEST_DATABASE_URL=postgresql://user:pass@localhost/wardlock_test pytest -q
+  ```
+- **Acceptance tests T1–T21** from SPEC §13, among them:
+  - cross-customer refunds;
+  - replayed and stolen handles;
+  - inflated, missing and garbage amounts;
+  - prompt-injected tickets;
+  - lost PayPal responses (idempotent retry);
+  - forged webhooks, and a forged `custom_id` that tries to hide an outside refund.
+- **The scripted attacker (T19):** 38 malicious tool calls, including other customers' captures, stolen handles, made-up IDs and amounts such as `1e9` or `NaN`. It passes against the local server and the Render deployment with **0 allowed**.
+- **Concurrency:** parallel conversations race for the same refund, and money moves at most as far as the order allows.
+  - On Postgres this runs as truly parallel transactions.
+  - Removing the row lock makes the test fail, which proves the test can catch a double refund.
+- **Hostile inputs:** NUL bytes, emoji, right-to-left text, SQL-like strings and over-long values on every endpoint. Each one ends as a recorded BLOCK or a plain 4xx, never a 500.
+- **Live sandbox checks:**
+  - real refunds;
+  - `PayPal-Request-Id` idempotency;
+  - a real signed webhook raising an out-of-band alert;
+  - the Gemini-driven agent end to end.
 
 ## Evaluation
 
-[`eval/run_eval.py`](eval/run_eval.py) runs the same LLM agent over a corpus of attack and benign tickets in three configurations:
+[`eval/run_eval.py`](eval/run_eval.py) runs the same LLM agent over 100 reviewed attack and benign tickets ([`eval/corpus/`](eval/corpus)) in three configurations:
 - **A:** raw, with PayPal's own `create_refund`;
 - **B:** Wardlock with every refund held for a person;
 - **C:** Wardlock.
 
-It reports attack success rate, benign auto-resolution, hold rate, false-block rate and the latency Wardlock adds. Every number is computed by the script and written to [`eval/RESULTS.md`](eval/RESULTS.md), together with the model name and date.
+It reports attack success rate, benign auto-resolution, hold rate, false-block rate and the latency Wardlock adds. Every number is computed by the script and written to [`eval/RESULTS.md`](eval/RESULTS.md), together with the model name and date; numbers are never edited by hand.
 
 Each run starts from the same seeded orders with PayPal simulated in-process, so runs are repeatable and no sandbox money moves.
 
 ```bash
 python eval/run_eval.py
 ```
-
-**Results:** see [`eval/RESULTS.md`](eval/RESULTS.md). The table there is generated by the script; numbers are never edited by hand.
 
 ## Deploying (Render)
 
@@ -138,6 +240,18 @@ python eval/run_eval.py
    python scripts/seed_sandbox.py --restore-db
    ```
 
+**Free-plan behaviour:**
+- The service sleeps after about 15 idle minutes. The next request waits about 50–60 s while it starts, and `/health` answers when it's ready.
+- A PayPal webhook to a sleeping service wakes it. If that delivery times out, PayPal retries it, so no event is lost.
+- The background sweep that expires stale holds runs only while the service is awake. On waking, it catches up within a minute.
+
+## Known limitations
+
+- **Sandbox only.** The PayPal client refuses any base URL other than the sandbox unless `ALLOW_LIVE=1`, which this project never sets.
+- **No rate limit on `get_session_context`.** Each call writes fresh handles. This stays inside the agent's own 30-minute session and moves no money.
+- **Duplicate alerts.** If PayPal delivers the same webhook twice at the very same moment, the same alert can appear twice. No money effect.
+- **One currency per policy.** Refunds in another currency are always held for a person.
+
 ## Repository layout
 
 | Path | What |
@@ -145,15 +259,17 @@ python eval/run_eval.py
 | `wardlock/` | The gateway: sessions, handles, the pure `engine/`, executor, MCP tools, webhooks, admin API, and the only PayPal client (`paypal/client.py`) |
 | `demo_agent/` | The orchestrator, the LLM support agent (configs A and C), the T19 scripted attacker, and the eval harness |
 | `console/` | React + Vite + AG Grid merchant console |
-| `eval/` | `run_eval.py`, the reviewed corpus (`corpus/`), drafts awaiting review (`corpus_drafts/`), and `RESULTS.md` |
-| `seed/`, `scripts/` | Demo customers and orders; sandbox seeding and smoke tools |
+| `eval/` | `run_eval.py`, the reviewed ticket corpus (`corpus/`), and `RESULTS.md` |
+| `seed/`, `scripts/` | Demo customers and orders; sandbox seeding, the MCP check and smoke tools |
 | `tests/` | The acceptance tests (SPEC §13, T1–T21) and many more; no network needed |
+| `docs/SPEC.md` | The design: guarantees, tools, handles, engine rules, executor, webhooks, data model |
 
 ## Tools used
 
 - **Code:** Python, FastAPI, SQLAlchemy, Pydantic, httpx, the official MCP Python SDK; React, Vite and AG Grid Community for the console; pytest and respx for tests.
 - **PayPal:** the sandbox REST APIs (Orders, Payments, Webhooks), and PayPal's MCP server `@paypal/mcp` for the baseline.
 - **LLM:** Google Gemini, through its OpenAI-compatible API, for the support agent and the reason check.
+- **Hosting:** Render (free web service and Postgres).
 - **Claude Code**, Anthropic's coding agent, was used throughout to design, implement, test and review the code, working phase by phase from the spec.
 
 ## License

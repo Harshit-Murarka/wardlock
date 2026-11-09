@@ -14,6 +14,7 @@ import argparse
 import asyncio
 import json
 import sys
+import time
 from dataclasses import dataclass
 
 import httpx2
@@ -39,6 +40,40 @@ class OpenedSession:
 
     def __repr__(self) -> str:
         return f"OpenedSession(session_id={self.session_id!r})"  # never the token
+
+
+WAKE_UP_MAX_SECONDS = 150.0  # a sleeping free Render service takes about a minute to start
+WAKE_UP_RETRY_SECONDS = 5.0
+
+
+async def wake_up(
+    base_url: str, *, max_wait: float = WAKE_UP_MAX_SECONDS,
+    transport: httpx2.AsyncBaseTransport | None = None,
+    sleep=asyncio.sleep, clock=time.monotonic, say=lambda text: print(text, file=sys.stderr),
+) -> None:
+    """Wait until GET /health answers 200, so the first real call doesn't time out.
+
+    Render's free plan stops an idle service after about 15 minutes. The next request then
+    waits (or gets a 502/503) for roughly a minute while it starts, longer than the 30 s
+    timeouts below, so we wake it here first with one patient request.
+    """
+    deadline = clock() + max_wait
+    told = False
+    timeout = httpx2.Timeout(10.0, read=max_wait)
+    async with httpx2.AsyncClient(base_url=base_url.rstrip("/"), transport=transport, timeout=timeout) as http:
+        while True:
+            try:
+                if (await http.get("/health")).status_code == 200:
+                    return
+            except httpx2.HTTPError:
+                pass  # not up yet (connection refused, reset or timed out)
+            if clock() >= deadline:
+                raise OrchestratorError(f"Wardlock at {base_url} did not wake up within {max_wait:.0f} s")
+            if not told:
+                say(f"Waiting for Wardlock at {base_url} to start (a sleeping free Render service "
+                    "takes about a minute)...")
+                told = True
+            await sleep(WAKE_UP_RETRY_SECONDS)
 
 
 async def open_session(
@@ -134,6 +169,7 @@ async def main(argv: list[str] | None = None) -> int:
         return 2
     try:
         if args.config == "C":
+            await wake_up(args.url)
             run = await run_c(llm, ticket, base_url=args.url,
                               service_key=settings.wardlock_service_key.get_secret_value())
             print(format_run(run))

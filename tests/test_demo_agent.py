@@ -291,3 +291,61 @@ def test_config_a_refuses_to_start_without_create_refund(wl):
     paypal.tools = []
     with pytest.raises(RuntimeError):
         RawToolbox(wl.factory, "cust_ana", paypal, live=False)
+
+
+# ---------------------------------------------------------------- waking a sleeping server
+
+
+def _health_transport(answers):
+    """A transport that answers GET /health with the next item: a status code or an exception."""
+    calls = []
+
+    def handler(request):
+        calls.append(request.url.path)
+        answer = answers.pop(0)
+        if isinstance(answer, Exception):
+            raise answer
+        return httpx2.Response(answer, json={"status": "ok"})
+
+    return httpx2.MockTransport(handler), calls
+
+
+class _FakeClock:
+    def __init__(self):
+        self.now = 0.0
+
+    def __call__(self):
+        return self.now
+
+    async def sleep(self, seconds):
+        self.now += seconds
+
+
+async def test_wake_up_returns_at_once_when_the_server_is_up():
+    from demo_agent.orchestrator import wake_up
+
+    transport, calls = _health_transport([200])
+    said = []
+    await wake_up("https://example.test", transport=transport, say=said.append)
+    assert calls == ["/health"] and said == []
+
+
+async def test_wake_up_waits_through_a_cold_start():
+    from demo_agent.orchestrator import wake_up
+
+    clock = _FakeClock()
+    transport, calls = _health_transport([httpx2.ConnectError("down"), 502, 503, 200])
+    said = []
+    await wake_up("https://example.test", transport=transport, sleep=clock.sleep, clock=clock, say=said.append)
+    assert len(calls) == 4
+    assert len(said) == 1 and "about a minute" in said[0]  # told once, not on every retry
+
+
+async def test_wake_up_gives_up_with_a_plain_error():
+    from demo_agent.orchestrator import OrchestratorError, wake_up
+
+    clock = _FakeClock()
+    transport, _ = _health_transport([503] * 100)
+    with pytest.raises(OrchestratorError, match="did not wake up"):
+        await wake_up("https://example.test", max_wait=20, transport=transport,
+                      sleep=clock.sleep, clock=clock, say=lambda _: None)

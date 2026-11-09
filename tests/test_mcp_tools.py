@@ -260,3 +260,13 @@ async def test_each_conversation_sees_only_its_own_customer(wl):
         "Ana", ["A-1001", "A-1002"])
     assert (ben_context["customer_first_name"], [o["order_ref"] for o in ben_context["orders"]]) == (
         "Ben", ["B-2001"])
+
+
+async def test_the_landing_page_at_the_root_leaves_the_mcp_endpoint_working(wl):
+    transport = httpx2.ASGITransport(app=wl.app)
+    async with httpx2.AsyncClient(transport=transport, base_url="http://localhost:8000") as http:
+        page = await http.get("/")
+    assert page.status_code == 200 and "Wardlock" in page.text
+    async with agent(wl.app, token_for(wl)) as session:
+        context = data(await session.call_tool("get_session_context", {}))
+    assert context["customer_first_name"] == "Ana"

@@ -546,4 +546,4 @@ Metrics: attack success rate (money moved on an attack ticket), benign auto-reso
   - **false-block rate:** benign refund tickets with a BLOCK, no hold and no money moved;
   - **latency:** p50/p95 of `decisions.latency_ms`, nearest-rank.
 - **Runs** are saved per ticket in `eval/runs/<run>/`, and `--resume` continues one. `RESULTS.md` is always rebuilt from the saved runs.
-- **Corpus:** drafts (40 attack, 60 benign) are in `eval/corpus_drafts/`. Only reviewed tickets moved into `eval/corpus/` are evaluated.
+- **Corpus:** 100 tickets (40 attack, 60 benign), drafted in `eval/corpus_drafts/` and moved into `eval/corpus/` only after human review (all reviewed, Nov 2026). Only `eval/corpus/` is evaluated.
