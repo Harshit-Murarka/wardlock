@@ -8,16 +8,18 @@ version = "0.1.0"
 description = "A money gate that lets an AI support agent refund PayPal customers safely (sandbox only)."
 requires-python = ">=3.11"
 dependencies = [
-    "fastapi>=0.115",
-    "uvicorn>=0.30",
-    "httpx>=0.27",
-    "pydantic>=2.7",
-    "pydantic-settings>=2.3",
-    "sqlalchemy>=2.0",
-    "mcp>=1.8",  # 1.8 added the streamable HTTP transport (SPEC §3)
-    "python-dotenv>=1.0",
-    "pyyaml>=6",  # policy.yaml (SPEC §5)
-    "psycopg[binary]>=3.2",  # Postgres on Render (P11); unused with SQLite
+    # Lower bounds = the versions the test suite runs on; upper bounds stop a new major
+    # version from changing behaviour under a deploy (Render installs fresh each build).
+    "fastapi>=0.142,<1",
+    "uvicorn>=0.54,<1",
+    "httpx>=0.28,<1",
+    "pydantic>=2.13,<3",
+    "pydantic-settings>=2.15,<3",
+    "sqlalchemy>=2.1,<2.2",
+    "mcp>=2.3,<3",  # the 2.x API (MCPServer, streamable HTTP); 1.x is not compatible
+    "python-dotenv>=1.2,<2",
+    "pyyaml>=6,<7",  # policy.yaml (SPEC §5)
+    "psycopg[binary]>=3.3,<4",  # Postgres on Render (P11); unused with SQLite
 ]
 
 [project.optional-dependencies]
