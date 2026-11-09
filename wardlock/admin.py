@@ -1,7 +1,8 @@
 """The merchant console's API (SPEC §12): /admin/api/*, behind HTTP Basic auth.
 
 Auth: user "admin", password WARDLOCK_ADMIN_PASSWORD, compared in constant time. Unset ->
-503 for everyone (fail closed). A 401 deliberately has NO `WWW-Authenticate` header, so a
+503 for the admin (fail closed). With CONSOLE_PUBLIC_READONLY=1 anyone may also sign in as
+"viewer" (any password) for a public demo, but only to read: every POST from it is a 403. A 401 deliberately has NO `WWW-Authenticate` header, so a
 browser never caches the credentials: the console sends them itself on every call, and a
 malicious page in another tab cannot ride on a cached login to approve a hold (CSRF).
 
@@ -29,13 +30,13 @@ from wardlock.money import from_minor
 from wardlock.replay import segments
 
 ADMIN_USER = "admin"
+VIEWER_USER = "viewer"
+READ_METHODS = ("GET", "HEAD")
 MAX_ROWS = 500
 
 
 def require_admin(request: Request, settings: Settings = Depends(get_settings)) -> str:
-    password = settings.wardlock_admin_password.get_secret_value()
-    if not password:
-        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "The console is not configured.")
+    """The signed-in user: "admin", or "viewer" for read-only requests when the demo is public."""
     scheme, _, encoded = request.headers.get("authorization", "").partition(" ")
     user, given = "", ""
     if scheme.lower() == "basic":
@@ -43,6 +44,14 @@ def require_admin(request: Request, settings: Settings = Depends(get_settings)) 
             user, _, given = base64.b64decode(encoded.strip(), validate=True).decode("utf-8").partition(":")
         except (binascii.Error, UnicodeDecodeError):
             pass
+    if user == VIEWER_USER and settings.console_public_readonly:
+        if request.method not in READ_METHODS:
+            raise HTTPException(status.HTTP_403_FORBIDDEN,
+                                "This is the read-only demo. Only the merchant can approve, deny or acknowledge.")
+        return VIEWER_USER
+    password = settings.wardlock_admin_password.get_secret_value()
+    if not password:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "The console is not configured.")
     # Both comparisons always run, so timing reveals nothing about which part was wrong.
     user_ok = hmac.compare_digest(user.encode(), ADMIN_USER.encode())
     password_ok = hmac.compare_digest(given.encode(), password.encode())
@@ -52,7 +61,13 @@ def require_admin(request: Request, settings: Settings = Depends(get_settings)) 
 
 
 router = APIRouter(prefix="/admin/api", dependencies=[Depends(require_admin)])
+public_router = APIRouter(prefix="/admin/public")  # no auth: what the sign-in screen may offer
 Db = Annotated[Session, Depends(get_db)]
+
+
+@public_router.get("/config")
+def console_config(settings: Settings = Depends(get_settings)) -> dict[str, bool]:
+    return {"public_readonly": settings.console_public_readonly}
 
 
 def _money(minor: int | None, currency: str | None) -> str | None:

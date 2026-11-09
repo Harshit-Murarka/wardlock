@@ -155,3 +155,62 @@ def test_the_console_never_renders_ticket_text_as_html():
         text = path.read_text(encoding="utf-8")
         for forbidden in ("dangerouslySetInnerHTML", "innerHTML", "outerHTML", "insertAdjacentHTML", "document.write"):
             assert forbidden not in text, f"{path.name} uses {forbidden}"
+
+
+# ---------------------------------------------------------------- the public read-only demo
+
+
+def public_demo(wl, on=True):
+    settings = Settings(_env_file=None, wardlock_admin_password=ADMIN_PASSWORD, console_public_readonly=on)
+    wl.app.dependency_overrides[get_settings] = lambda: settings
+
+
+async def test_the_viewer_is_refused_unless_the_demo_is_public(wl):
+    public_demo(wl, on=False)
+    assert (await call(wl, "GET", "/admin/api/decisions", basic(user="viewer", password="demo"))).status_code == 401
+    assert (await call(wl, "GET", "/admin/public/config", {})).json() == {"public_readonly": False}
+
+
+async def test_a_public_demo_viewer_can_read_everything(wl):
+    public_demo(wl)
+    await ask_for(wl, "Commuter helmet x1")  # a pending hold to look at
+    assert (await call(wl, "GET", "/admin/public/config", {})).json() == {"public_readonly": True}
+    for path in ["/admin/api/decisions", "/admin/api/holds", "/admin/api/alerts", "/admin/api/ledger",
+                 "/admin/api/sessions"]:
+        response = await call(wl, "GET", path, basic(user="viewer", password="anything"))
+        assert response.status_code == 200, path
+    [hold] = (await call(wl, "GET", "/admin/api/holds", basic(user="viewer", password=""))).json()
+    assert hold["status"] == "PENDING"
+
+
+async def test_a_public_demo_viewer_can_never_approve_deny_or_acknowledge(wl):
+    public_demo(wl)
+    outcome, _ = await ask_for(wl, "Commuter helmet x1")
+    with wl.factory() as db, db.begin():
+        db.add(Alert(kind=AlertKind.OUT_OF_BAND_REFUND, details_json={}))
+    [alert] = (await call(wl, "GET", "/admin/api/alerts")).json()
+    viewer = basic(user="viewer", password=ADMIN_PASSWORD)  # even with the admin's password
+    for path in [f"/admin/api/holds/{outcome.hold_id}/approve", f"/admin/api/holds/{outcome.hold_id}/deny",
+                 f"/admin/api/alerts/{alert['id']}/ack"]:
+        response = await call(wl, "POST", path, viewer)
+        assert response.status_code == 403, path
+        assert "read-only" in response.json()["detail"]
+    assert wl.fake.calls == []  # no money moved
+    [hold] = (await call(wl, "GET", "/admin/api/holds")).json()
+    assert hold["status"] == "PENDING"
+    with wl.factory() as db:
+        assert db.scalar(select(Alert)).acknowledged is False
+
+
+async def test_the_admin_still_works_while_the_demo_is_public(wl):
+    public_demo(wl)
+    outcome, _ = await ask_for(wl, "Commuter helmet x1")
+    assert (await call(wl, "POST", f"/admin/api/holds/{outcome.hold_id}/deny")).json()["status"] == "DENIED"
+    assert (await call(wl, "GET", "/admin/api/decisions", basic(password="wrong"))).status_code == 401
+
+
+async def test_the_landing_page_mentions_the_demo_only_when_it_is_public(wl):
+    public_demo(wl, on=False)
+    assert "View the live demo" not in (await call(wl, "GET", "/", {})).text
+    public_demo(wl)
+    assert "View the live demo" in (await call(wl, "GET", "/", {})).text

@@ -37,6 +37,9 @@ services:
         generateValue: true
       - key: WARDLOCK_ADMIN_PASSWORD
         sync: false
+      # Lets anyone open the console read-only ("View the live demo"); approving still needs the password.
+      - key: CONSOLE_PUBLIC_READONLY
+        value: "1"
       # Your Render host, e.g. ["wardlock.onrender.com"] and ["https://wardlock.onrender.com"].
       - key: MCP_ALLOWED_HOSTS
         sync: false

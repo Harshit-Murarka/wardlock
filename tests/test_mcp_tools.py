@@ -270,3 +270,37 @@ async def test_the_landing_page_at_the_root_leaves_the_mcp_endpoint_working(wl):
     async with agent(wl.app, token_for(wl)) as session:
         context = data(await session.call_tool("get_session_context", {}))
     assert context["customer_first_name"] == "Ana"
+
+
+async def test_a_browser_opening_mcp_gets_a_readable_page_listing_the_live_tools(wl):
+    transport = httpx2.ASGITransport(app=wl.app)
+    async with httpx2.AsyncClient(transport=transport, base_url="http://localhost:8000") as http:
+        page = await http.get("/mcp", headers={"Accept": "text/html,application/xhtml+xml,*/*;q=0.8"})
+    assert page.status_code == 200 and page.headers["content-type"].startswith("text/html")
+    for name in ("get_session_context", "request_refund", "get_refund_status", "request_refund_raw"):
+        assert f"{name}(" in page.text
+    assert "request_refund(refund_handles, reason_code, note_to_customer?)" in page.text
+
+
+@pytest.mark.parametrize(("method", "path", "accept", "browser"), [
+    ("GET", "/mcp", "text/html,application/xhtml+xml,*/*;q=0.8", True),
+    ("GET", "/mcp/", "text/html", True),
+    ("GET", "/mcp", "text/event-stream", False),  # an MCP client opening its stream
+    ("GET", "/mcp", "text/html, text/event-stream", False),
+    ("GET", "/mcp", "", False),
+    ("POST", "/mcp", "text/html", False),
+    ("GET", "/mcpx", "text/html", False),
+])
+def test_only_a_browser_visit_gets_the_page(method, path, accept, browser):
+    from wardlock.main import _is_browser_visit
+
+    scope = {"type": "http", "method": method, "path": path, "headers": [(b"accept", accept.encode())]}
+    assert _is_browser_visit(scope) is browser
+
+
+async def test_the_browser_page_never_replaces_an_mcp_post(wl):
+    transport = httpx2.ASGITransport(app=wl.app)
+    async with httpx2.AsyncClient(transport=transport, base_url="http://localhost:8000") as http:
+        response = await http.post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
+                                   headers={"Accept": "application/json, text/event-stream, text/html"})
+    assert response.status_code == 200 and "tools" in response.json()["result"]

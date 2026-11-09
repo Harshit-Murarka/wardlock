@@ -24,12 +24,13 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from wardlock.config import Settings, get_settings
 from wardlock.enums import AlertKind, Verdict
+from wardlock.landing import webhooks_page
 from wardlock.mcp_tools import AgentServices
 from wardlock.models import Alert, Decision, LedgerEntry, WebhookEvent
 from wardlock.money import to_minor
@@ -92,6 +93,15 @@ async def paypal_webhook(request: Request, settings: Settings = Depends(get_sett
     outcome = _process(services, event)
     _store_verified(services, event)  # only after processing: a crash means PayPal re-delivers
     return _answer(200, outcome)
+
+
+@router.get("/webhooks/paypal", include_in_schema=False)
+async def paypal_webhook_page(request: Request, settings: Settings = Depends(get_settings)) -> HTMLResponse:
+    """For a person opening this URL in a browser. PayPal only ever POSTs here."""
+    services: AgentServices | None = getattr(request.app.state, "services", None)
+    verification_on = bool(settings.paypal_webhook_id and services is not None
+                           and services.paypal is not None and services.executor is not None)
+    return HTMLResponse(webhooks_page(verification_on=verification_on))
 
 
 # ---------------------------------------------------------------- reading the request

@@ -15,7 +15,7 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from mcp.server.transport_security import TransportSecuritySettings
 from sqlalchemy import Engine
 from starlette.responses import HTMLResponse, PlainTextResponse, RedirectResponse
@@ -26,7 +26,7 @@ from wardlock.config import Settings, get_settings
 from wardlock.db import get_engine, init_db, make_session_factory
 from wardlock.engine.policy import load_policy
 from wardlock.executor import Executor
-from wardlock.landing import LANDING_HTML
+from wardlock.landing import landing_html, mcp_page
 from wardlock.llm import LLMClient
 from wardlock.mcp_tools import AgentServices, build_mcp_server
 from wardlock.paypal.client import PayPalClient
@@ -47,12 +47,24 @@ class _LateMount:
 
     def __init__(self) -> None:
         self.app: Any = None
+        self.browser_page: str | None = None  # what a person opening /mcp in a browser sees
 
     async def __call__(self, scope, receive, send) -> None:
         if self.app is None:
             await PlainTextResponse("starting", status_code=503)(scope, receive, send)
             return
+        if self.browser_page and _is_browser_visit(scope):
+            await HTMLResponse(self.browser_page)(scope, receive, send)
+            return
         await self.app(scope, receive, send)
+
+
+def _is_browser_visit(scope) -> bool:
+    """A plain GET of /mcp that wants HTML. MCP clients send Accept: text/event-stream, never this."""
+    if scope["type"] != "http" or scope["method"] != "GET" or scope["path"].rstrip("/") != "/mcp":
+        return False
+    accept = dict(scope.get("headers") or []).get(b"accept", b"").decode("latin-1").lower()
+    return "text/html" in accept and "text/event-stream" not in accept
 
 
 class _RejectNulInUrl:
@@ -107,6 +119,7 @@ def create_app(
                     allowed_origins=config.mcp_allowed_origins,
                 ),
             )
+            mcp_mount.browser_page = mcp_page(await mcp.list_tools())
             # A mounted sub-app's own lifespan never runs, so start the MCP session manager here.
             await stack.enter_async_context(mcp.session_manager.run())
             if sweep_interval and agent.executor is not None:
@@ -119,6 +132,7 @@ def create_app(
     app.include_router(sessions.router)
     app.include_router(webhooks.router)
     app.include_router(admin.router)
+    app.include_router(admin.public_router)
     app.add_api_route("/health", health, methods=["GET"])
     app.add_api_route("/", landing, methods=["GET"], include_in_schema=False)
     if CONSOLE_DIST.is_dir():  # the merchant console (P9); its API calls need the admin password
@@ -164,9 +178,9 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-def landing() -> HTMLResponse:
+def landing(settings: Settings = Depends(get_settings)) -> HTMLResponse:
     """A static page saying what this server is, so the bare URL isn't a 404."""
-    return HTMLResponse(LANDING_HTML)
+    return HTMLResponse(landing_html(public_console=settings.console_public_readonly))
 
 
 app = create_app()

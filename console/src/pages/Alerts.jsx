@@ -2,7 +2,7 @@ import Grid from "../Grid.jsx";
 import { AuthError, api, when } from "../api.js";
 import { useData } from "../useData.js";
 
-export default function Alerts({ onAuthError }) {
+export default function Alerts({ onAuthError, readOnly }) {
   const { data, error, reload } = useData("/alerts", onAuthError);
 
   async function acknowledge(alert) {
@@ -23,7 +23,8 @@ export default function Alerts({ onAuthError }) {
     },
     {
       field: "acknowledged", headerName: "", width: 150, sortable: false, filter: false,
-      cellRenderer: (p) => (p.value ? "acknowledged" : <button onClick={() => acknowledge(p.data)}>Acknowledge</button>),
+      cellRenderer: (p) => (p.value ? "acknowledged" : readOnly ? <span className="hint">open</span>
+        : <button onClick={() => acknowledge(p.data)}>Acknowledge</button>),
     },
   ];
 

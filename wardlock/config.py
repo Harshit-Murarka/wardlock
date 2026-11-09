@@ -36,6 +36,9 @@ class Settings(BaseSettings):
     # Wardlock's own secrets: orchestrator service key (SPEC §10) and console password (SPEC §12).
     wardlock_service_key: SecretStr = SecretStr("")
     wardlock_admin_password: SecretStr = SecretStr("")
+    # A public, read-only way into the console for a demo: user "viewer", no password. It can
+    # only read (GET); approve, deny and acknowledge still need the admin password. Off by default.
+    console_public_readonly: bool = False
 
     # Host and Origin headers the MCP endpoint accepts (DNS-rebinding protection).
     # Add your Render host in P11, e.g. ["wardlock.onrender.com"].

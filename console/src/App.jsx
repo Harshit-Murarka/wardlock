@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { AuthError, api, getPassword, setPassword } from "./api.js";
+import { AuthError, VIEWER, api, consoleConfig, getPassword, isViewer, setPassword } from "./api.js";
 import Decisions from "./pages/Decisions.jsx";
 import Holds from "./pages/Holds.jsx";
 import Alerts from "./pages/Alerts.jsx";
@@ -23,16 +23,26 @@ function readRoute() {
 function Login({ onDone }) {
   const [value, setValue] = useState("");
   const [error, setError] = useState("");
+  const [demoOpen, setDemoOpen] = useState(false);
 
-  async function submit(event) {
-    event.preventDefault();
-    setPassword(value);
+  useEffect(() => {
+    consoleConfig().then((config) => setDemoOpen(Boolean(config.public_readonly)));
+  }, []);
+
+  async function signIn(password, user) {
+    setPassword(password, user);
     try {
       await api("/alerts");
       onDone();
     } catch (e) {
+      setPassword(null);
       setError(e instanceof AuthError ? "Wrong password." : e.message);
     }
+  }
+
+  function submit(event) {
+    event.preventDefault();
+    signIn(value, "admin");
   }
 
   return (
@@ -44,6 +54,16 @@ function Login({ onDone }) {
       </label>
       <button type="submit" disabled={!value}>Sign in</button>
       {error && <p className="error">{error}</p>}
+      {demoOpen && (
+        <div className="demo-entry">
+          <span>Judging or just curious?</span>
+          <button type="button" className="primary" onClick={() => signIn("demo", VIEWER)}>
+            View the live demo (read-only)
+          </button>
+          <small>See every decision, hold, alert and ticket replay. Approving or denying still needs the
+            merchant's password.</small>
+        </div>
+      )}
     </form>
   );
 }
@@ -62,7 +82,8 @@ export default function App() {
   const onAuthError = useCallback(() => setSignedIn(false), []);
 
   if (!signedIn) return <Login onDone={() => setSignedIn(true)} />;
-  const props = { arg: route.arg, onAuthError };
+  const readOnly = isViewer();
+  const props = { arg: route.arg, onAuthError, readOnly };
 
   return (
     <div className="app">
@@ -75,8 +96,15 @@ export default function App() {
             </a>
           ))}
         </nav>
+        {readOnly && <span className="badge">read-only demo</span>}
         <button className="link" onClick={() => { setPassword(null); setSignedIn(false); }}>Sign out</button>
       </header>
+      {readOnly && (
+        <p className="readonly-note">
+          You're looking at the live demo data read-only. Start with <a href="#/replay">Ticket replay</a> to
+          see a customer's message, what the AI agent asked for, and why Wardlock allowed, held or blocked it.
+        </p>
+      )}
       <main>
         {route.page === "decisions" && <Decisions {...props} />}
         {route.page === "holds" && <Holds {...props} />}

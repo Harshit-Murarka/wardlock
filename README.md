@@ -10,7 +10,9 @@
 
 Built for the PayPal AI Hackathon (2026).
 
-> **Live demo:** https://wardlock.onrender.com (landing page, [`/docs`](https://wardlock.onrender.com/docs), MCP at `/mcp`)
+> **Live demo:** https://wardlock.onrender.com
+> - **Merchant console:** https://wardlock.onrender.com/console/. Choose **View the live demo (read-only)** to browse every decision, hold, alert and ticket replay without a password. That view can't approve, deny or acknowledge anything, because the server refuses it.
+> - **Machine endpoints:** [`/mcp`](https://wardlock.onrender.com/mcp) for the agent and [`/webhooks/paypal`](https://wardlock.onrender.com/webhooks/paypal) for PayPal. Both show a readable explanation in a browser.
 >
 > **⏱ About the first minute.** The demo runs on Render's free plan, which puts the service to sleep after about 15 minutes without traffic. The first request after that is a **cold start of roughly 50–60 seconds**: the page or the call just waits, and may briefly show a Render loading page or a 502. After that it answers in milliseconds.
 > - Open https://wardlock.onrender.com/health first and wait for `{"status":"ok"}`.
@@ -165,7 +167,20 @@ To run these against a deployed Wardlock instead, pass `--url https://<your depl
 - For the attacker's ledger check, set `DATABASE_URL` to the deployment's database too.
 - Each one waits through a cold start first.
 
-## For judges: trying it in the PayPal sandbox
+## For judges: the live console in two minutes
+
+1. Open https://wardlock.onrender.com/health and wait for `{"status":"ok"}`. The first request after a quiet spell takes up to a minute.
+2. Open https://wardlock.onrender.com/console/ and choose **View the live demo (read-only)**.
+3. **Ticket replay:** pick a ticket. Three columns show:
+   - what the customer wrote, with injected instructions highlighted;
+   - every tool call the AI agent made;
+   - Wardlock's verdict, in plain words.
+4. **Decisions:** filter by `BLOCKED` to see the T19 attacker's attempts. Each one has its reason code (`NOT_OWNER`, `UNKNOWN_HANDLE`, `INVALID_AMOUNT`, ...).
+5. **Holds** shows refunds waiting for a person. **Alerts** shows refunds PayPal reported that Wardlock didn't make. **Ledger** shows the refunds that actually reached PayPal.
+
+The read-only view is a separate login that the server limits to reading. Every approve, deny or acknowledge from it gets 403, and tests check this.
+
+## For judges: trying it in your own PayPal sandbox
 
 1. Create a PayPal developer account at https://developer.paypal.com.
    - Under **Sandbox accounts**, create a **US Business** account. Sandbox accounts default to your own country, and non-US accounts cannot receive these USD test payments.

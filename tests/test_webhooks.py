@@ -245,3 +245,22 @@ async def test_counts_after_processing(wl):
     await post(wl, refund_event("RFOUT1", "CAPB2001", "189.00"))
     assert count(wl, WebhookEvent, WebhookEvent.verified.is_(True)) == 1
     assert count(wl, Decision) == 0  # a webhook never creates decisions
+
+
+async def _open_page(wl):
+    async with httpx2.AsyncClient(transport=httpx2.ASGITransport(app=wl.app), base_url="http://localhost:8000") as http:
+        return await http.get("/webhooks/paypal")
+
+
+async def test_a_browser_gets_a_page_saying_verification_is_on(wl):
+    page = await _open_page(wl)
+    assert page.status_code == 200 and page.headers["content-type"].startswith("text/html")
+    assert "PAYMENT.CAPTURE.REFUNDED" in page.text and ">ON<" in page.text
+    assert wl.fake.verify_requests == []  # opening the page asks PayPal nothing
+
+
+async def test_the_page_says_off_without_a_webhook_id(wl):
+    settings = Settings(_env_file=None, paypal_webhook_id="")
+    wl.app.dependency_overrides[get_settings] = lambda: settings
+    page = await _open_page(wl)
+    assert ">OFF<" in page.text and ">ON<" not in page.text

@@ -5,7 +5,7 @@ import { useData } from "../useData.js";
 
 const STATUSES = ["PENDING", "", "APPROVED", "EXECUTED", "DENIED", "EXPIRED", "BLOCKED"];
 
-export default function Holds({ onAuthError }) {
+export default function Holds({ onAuthError, readOnly }) {
   const [status, setStatus] = useState("PENDING");
   const [message, setMessage] = useState("");
   const { data, error, reload } = useData(status ? `/holds?status=${status}` : "/holds", onAuthError);
@@ -39,6 +39,7 @@ export default function Holds({ onAuthError }) {
     {
       headerName: "Action", width: 190, sortable: false, filter: false,
       cellRenderer: (p) =>
+        p.data.status === "PENDING" && readOnly ? <span className="hint">waiting for the merchant</span> :
         p.data.status === "PENDING" ? (
           <span className="actions">
             <button onClick={() => decide(p.data, "approve")}>Approve</button>
