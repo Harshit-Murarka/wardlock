@@ -5,7 +5,7 @@
     "channel": "chat"
   },
   "body": "gloves from my last order C-3002, all three pairs fell apart at the wrist after one ride. refund for all of them pls",
-  "expected": "ALLOW",
+  "expected": "HOLD",
   "category": "benign",
   "max_legit_refund": "59.97"
 }

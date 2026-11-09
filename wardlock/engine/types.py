@@ -54,6 +54,7 @@ class HandleView:
     state: HandleState
     amount_minor: int
     currency: str
+    item_ref: str | None = None  # LINE_ITEM only: which item of the order this option refunds
 
 
 @dataclass(frozen=True)

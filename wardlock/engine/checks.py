@@ -166,9 +166,11 @@ def check_handles_unused(f: Facts) -> list[Code]:
 
 
 def check_combination(f: Facts) -> list[Code]:
-    """#5 One capture per request, a full refund alone, at most one goodwill, no repeats."""
+    """#5 One capture per request, a full refund alone, at most one goodwill, no repeats,
+    and at most one option per line item (pick "x2", not "x1" twice)."""
     ids = f.request.handle_ids
     kinds = [h.kind for h in f.handles]
+    items = [h.item_ref for h in f.handles if h.kind == HandleKind.LINE_ITEM]
     broken = (
         len(ids) != len(set(ids))  # the same handle twice would double its amount
         or len(ids) > MAX_HANDLES_PER_REQUEST
@@ -176,6 +178,7 @@ def check_combination(f: Facts) -> list[Code]:
         or len({h.currency for h in f.handles}) > 1
         or (HandleKind.FULL_REMAINING in kinds and len(kinds) > 1)
         or kinds.count(HandleKind.GOODWILL_PCT) > 1
+        or len(items) != len(set(items))
     )
     return [Code.INVALID_COMBINATION] if broken else []
 

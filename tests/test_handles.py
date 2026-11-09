@@ -127,6 +127,7 @@ def test_mints_exactly_the_spec_example_for_a_1001(db):
     result = mint(db, new_session(db))
     assert summary(options_for(result, "A-1001")) == [
         ("LINE_ITEM", "Bike bell x1", "4.00"),
+        ("LINE_ITEM", "Bottle cage x1 (of 2)", "7.99"),  # one unit of a multi-unit line
         ("LINE_ITEM", "Bottle cage x2", "15.98"),
         ("SHIPPING", "Shipping", "6.50"),
         ("GOODWILL_PCT", "10% goodwill", "2.00"),
@@ -153,7 +154,8 @@ def test_no_paypal_ids_reach_the_agent(db):
 def test_three_times_19_99_is_exactly_59_97(db):
     """T18: the float version of this sum is 59.97000000000001."""
     options = options_for(mint(db, new_session(db, "cust_chen")), "C-3002")
-    assert str(option(options, HandleKind.LINE_ITEM).amount) == "59.97"
+    assert str(option(options, HandleKind.LINE_ITEM, "Cycling gloves x3").amount) == "59.97"
+    assert [str(o.amount) for o in options if o.kind == HandleKind.LINE_ITEM] == ["19.99", "39.98", "59.97"]
     assert str(option(options, HandleKind.FULL_REMAINING).amount) == "59.97"
     assert [str(o.amount) for o in options if o.kind == HandleKind.GOODWILL_PCT] == ["6.00", "14.99"]
 
@@ -205,6 +207,7 @@ def test_after_a_bell_refund_the_bell_is_gone_and_full_remaining_shrinks(db):
     refund_with_handle(db, session, option(options_for(mint(db, session), "A-1001"), HandleKind.LINE_ITEM, "Bike bell x1"))
 
     assert summary(options_for(mint(db, session), "A-1001")) == [
+        ("LINE_ITEM", "Bottle cage x1 (of 2)", "7.99"),
         ("LINE_ITEM", "Bottle cage x2", "15.98"),
         ("SHIPPING", "Shipping", "6.50"),
         ("GOODWILL_PCT", "10% goodwill", "2.00"),

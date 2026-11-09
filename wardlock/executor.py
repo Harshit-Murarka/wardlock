@@ -218,7 +218,7 @@ class Executor:
         except ValueError:
             return {}, []  # e.g. non-string ids: nothing to load, so the engine says UNKNOWN_HANDLE
         views = {h.handle_id: HandleView(h.handle_id, h.session_id, h.capture_id, h.kind, h.state,
-                                         h.amount_minor, h.currency) for h in rows.values()}
+                                         h.amount_minor, h.currency, h.item_ref) for h in rows.values()}
         labels = [rows[h].label for h in dict.fromkeys(ids) if h in rows]
         return views, labels
 

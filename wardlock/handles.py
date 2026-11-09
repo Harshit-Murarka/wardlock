@@ -188,7 +188,7 @@ def reserve_new_handle(
     """
     kind, item_ref, pct, label, amount = candidate
     _lock_orders(db, {order.id})
-    if _already_spent(db, order.id, kind, item_ref):
+    if _already_spent(db, order.id, kind, item_ref, amount_minor=amount):
         raise HandleConflict("this item was already refunded or is being refunded")
     handle = Handle(
         handle_id=new_handle_id(),
@@ -211,20 +211,26 @@ def reserve_new_handle(
 
 def _candidates(db: Session, order: Order, goodwill_percentages: Sequence[int], remaining: int) -> list[Candidate]:
     """Every option this order could offer: (kind, item_ref, goodwill_pct, label, amount_minor)."""
-    spent = _spent(db, order.id)
+    used = _used_minor(db, order.id)
+    spent = _spent_kinds(db, order.id)
     candidates: list[Candidate] = []
 
     for item in order.items_json:
-        # An item already refunded, or being refunded, in any session is never offered again.
-        if (HandleKind.LINE_ITEM, item["item_ref"]) not in spent:
-            amount = item["unit_minor"] * item["quantity"]
-            candidates.append((HandleKind.LINE_ITEM, item["item_ref"], None, f"{item['name']} x{item['quantity']}", amount))
+        unit, quantity = item["unit_minor"], item["quantity"]
+        if unit <= 0:
+            continue
+        # Units not yet refunded (or being refunded) in any session. A line-item handle's
+        # amount is always unit x units, so the amounts used tell us the units used.
+        available = (unit * quantity - used.get(item["item_ref"], 0)) // unit
+        for units in _unit_counts(available):
+            label = f"{item['name']} x{units}" if units == quantity else f"{item['name']} x{units} (of {quantity})"
+            candidates.append((HandleKind.LINE_ITEM, item["item_ref"], None, label, unit * units))
 
-    if order.shipping_minor > 0 and (HandleKind.SHIPPING, None) not in spent:
+    if order.shipping_minor > 0 and HandleKind.SHIPPING not in spent:
         candidates.append((HandleKind.SHIPPING, None, None, "Shipping", order.shipping_minor))
 
     # At most one goodwill gesture per order, ever.
-    if not any(kind == HandleKind.GOODWILL_PCT for kind, _ref in spent):
+    if HandleKind.GOODWILL_PCT not in spent:
         item_total = sum(item["unit_minor"] * item["quantity"] for item in order.items_json)
         for pct in sorted(set(goodwill_percentages)):
             amount = goodwill_minor(item_total, pct)
@@ -236,15 +242,43 @@ def _candidates(db: Session, order: Order, goodwill_percentages: Sequence[int], 
     return candidates
 
 
-def _spent(db: Session, order_id: str) -> set[tuple[HandleKind, str | None]]:
-    """(kind, item_ref) of every handle on this order that is being refunded or was refunded."""
+MAX_UNIT_OPTIONS = 5  # above this many units, offer only "1" and "all that is left"
+
+
+def _unit_counts(available: int) -> list[int]:
+    """How many units to offer options for: 1, 2, ... up to what is left (short lists stay short)."""
+    if available <= 0:
+        return []
+    if available <= MAX_UNIT_OPTIONS:
+        return list(range(1, available + 1))
+    return [1, available]
+
+
+_IN_USE = (HandleState.RESERVED, HandleState.CONSUMED)
+
+
+def _used_minor(db: Session, order_id: str, exclude: Sequence[str] = ()) -> dict[str, int]:
+    """item_ref -> amount of its line-item handles that are being refunded or were refunded."""
     rows = db.execute(
-        select(Handle.kind, Handle.item_ref).where(
+        select(Handle.item_ref, func.sum(Handle.amount_minor)).where(
             Handle.order_id == order_id,
-            Handle.state.in_((HandleState.RESERVED, HandleState.CONSUMED)),
-        )
+            Handle.kind == HandleKind.LINE_ITEM,
+            Handle.state.in_(_IN_USE),
+            Handle.handle_id.not_in(list(exclude)),
+        ).group_by(Handle.item_ref)
     ).all()
-    return {(kind, item_ref) for kind, item_ref in rows}
+    return {item_ref: int(total) for item_ref, total in rows}
+
+
+def _spent_kinds(db: Session, order_id: str) -> set[HandleKind]:
+    """Shipping and goodwill can be refunded once per order: which of them already are."""
+    return set(db.scalars(
+        select(Handle.kind).where(
+            Handle.order_id == order_id,
+            Handle.kind.in_((HandleKind.SHIPPING, HandleKind.GOODWILL_PCT)),
+            Handle.state.in_(_IN_USE),
+        )
+    ))
 
 
 # ---------------------------------------------------------------- lookups and state changes
@@ -266,9 +300,15 @@ def reserve_handles(db: Session, session_id: str, handle_ids: Sequence[str]) -> 
     ids = _unique_ids(handle_ids)
     handles = db.scalars(select(Handle).where(Handle.handle_id.in_(ids))).all()
     _lock_orders(db, {h.order_id for h in handles})
-    if any(_already_spent(db, h.order_id, h.kind, h.item_ref, exclude=ids) for h in handles):
-        # The same item was refunded, or is being refunded, through ANOTHER handle: a second
-        # session's copy, or a compat refund. An item may only ever be spent once.
+    # Requested amounts per thing, so two handles for the same item are checked together.
+    requested: dict[tuple[str, HandleKind, str | None], int] = {}
+    for h in handles:
+        key = (h.order_id, h.kind, h.item_ref)
+        requested[key] = requested.get(key, 0) + h.amount_minor
+    if any(_already_spent(db, order_id, kind, item_ref, exclude=ids, amount_minor=amount)
+           for (order_id, kind, item_ref), amount in requested.items()):
+        # The item (beyond its quantity), the shipping or a goodwill gesture was refunded, or is
+        # being refunded, through ANOTHER handle: a second session's copy, or a compat refund.
         raise HandleConflict("this item was already refunded or is being refunded")
     changed = _move(db, ids, HandleState.AVAILABLE, HandleState.RESERVED, Handle.session_id == session_id)
     if len(changed) != len(ids):
@@ -285,25 +325,32 @@ def _lock_orders(db: Session, order_ids: set[str]) -> None:
 
 
 def _already_spent(
-    db: Session, order_id: str, kind: HandleKind, item_ref: str | None, exclude: Sequence[str] = ()
+    db: Session, order_id: str, kind: HandleKind, item_ref: str | None, exclude: Sequence[str] = (),
+    amount_minor: int = 0,
 ) -> bool:
-    """True if another handle for the same thing on this order is RESERVED or CONSUMED.
+    """True if refunding `amount_minor` more of this thing on this order would be too much.
 
-    "The same thing" means the same line item, the shipping, or any goodwill: at most one
-    goodwill gesture per order. FULL_REMAINING and CUSTOM_AMOUNT have no item of their own;
-    the remaining-amount check covers them.
+    - A line item: everything already used (RESERVED or CONSUMED handles, excluding `exclude`)
+      plus this amount may not exceed unit x quantity. So one cage of two can be refunded, then
+      the other, but never a third.
+    - Shipping and goodwill: at most once per order (at most one goodwill gesture).
+    - FULL_REMAINING and CUSTOM_AMOUNT have no item of their own; the remaining-amount check covers them.
     """
+    if kind == HandleKind.LINE_ITEM:
+        order = db.get(Order, order_id)
+        item = next((i for i in (order.items_json if order else []) if i["item_ref"] == item_ref), None)
+        if item is None:
+            return True  # an item the order doesn't have: never refundable
+        used = _used_minor(db, order_id, exclude).get(item_ref, 0)
+        return used + amount_minor > item["unit_minor"] * item["quantity"]
+    if kind not in (HandleKind.SHIPPING, HandleKind.GOODWILL_PCT):
+        return False
     query = select(Handle.handle_id).where(
         Handle.order_id == order_id,
-        Handle.state.in_((HandleState.RESERVED, HandleState.CONSUMED)),
+        Handle.kind == kind,
+        Handle.state.in_(_IN_USE),
         Handle.handle_id.not_in(list(exclude)),
     )
-    if kind == HandleKind.LINE_ITEM:
-        query = query.where(Handle.kind == HandleKind.LINE_ITEM, Handle.item_ref == item_ref)
-    elif kind in (HandleKind.SHIPPING, HandleKind.GOODWILL_PCT):
-        query = query.where(Handle.kind == kind)
-    else:
-        return False
     return db.scalar(query.limit(1)) is not None
 
 

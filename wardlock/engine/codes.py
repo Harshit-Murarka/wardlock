@@ -55,7 +55,7 @@ EXPLANATIONS: dict[Code, str] = {
     Code.HANDLE_ALREADY_USED: "A refund option was already used or has expired. Fetch fresh options.",
     Code.INVALID_COMBINATION: (
         "These refund options cannot be combined: one order per request, a full refund on its "
-        "own, at most one goodwill gesture, and no option twice."
+        "own, at most one goodwill gesture, one option per item, and no option twice."
     ),
     Code.NOT_OWNER: "That payment does not belong to this customer.",
     Code.MISSING_AMOUNT: "No amount was given.",

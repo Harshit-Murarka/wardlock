@@ -1,5 +1,8 @@
-# Wardlock — Technical Spec (narrowed scope) · v1.11 · Oct 12, 2026
+# Wardlock — Technical Spec (narrowed scope) · v1.12 · Nov 9, 2026
 
+> v1.12 changes:
+> - §4: per-unit options for multi-unit lines ("Bottle cage x1 (of 2)"); an item can be refunded unit by unit, never beyond its quantity; one option per item per request.
+>
 > v1.11 changes:
 > - §8: webhooks as built (raw-body verification, verified-only dedupe, backfill, alerts, how to try it).
 > - §12: the console as built (`/admin/api/*`, CSRF-safe basic auth, replay segmentation).
@@ -120,6 +123,7 @@ Returns the session customer's first name and their orders. **Never returns PayP
     "status": "DELIVERED",
     "refund_options": [
       {"handle": "h_3kQ...", "kind": "LINE_ITEM",      "label": "Bike bell x1",        "amount": "4.00",  "currency": "USD"},
+      {"handle": "h_4Kc...", "kind": "LINE_ITEM",      "label": "Bottle cage x1 (of 2)", "amount": "7.99", "currency": "USD"},
       {"handle": "h_9Zt...", "kind": "LINE_ITEM",      "label": "Bottle cage x2",      "amount": "15.98", "currency": "USD"},
       {"handle": "h_Ab1...", "kind": "SHIPPING",       "label": "Shipping",            "amount": "6.50",  "currency": "USD"},
       {"handle": "h_Pq7...", "kind": "GOODWILL_PCT",   "label": "10% goodwill",        "amount": "2.00",  "currency": "USD"},
@@ -185,7 +189,7 @@ Rules:
 - Valid only in the session that minted it; expire with the session.
 - `RESERVED` while a refund is executing or held; `CONSUMED` after a successful refund; back to `AVAILABLE` if a hold is denied or times out.
 - One request = one capture. `FULL_REMAINING` cannot be combined with other handles. At most one `GOODWILL_PCT` per request.
-- Amounts: `LINE_ITEM` = unit_amount × quantity; `SHIPPING` = breakdown shipping; `GOODWILL_PCT` = percentage (from policy) of item total, rounded half-up to minor units; `FULL_REMAINING` = captured − already refunded (ledger).
+- Amounts: `LINE_ITEM` = unit_amount × units, with one option for each number of units still refundable ("x1 (of 2)", "x2"; above 5 units only 1 and all that is left); `SHIPPING` = breakdown shipping; `GOODWILL_PCT` = percentage (from policy) of item total, rounded half-up to minor units; `FULL_REMAINING` = captured − already refunded (ledger).
 - One `GOODWILL_PCT` handle is minted per value in policy `goodwill_percentages` (default 10 and 25 → two handles per order). Example: item total 19.98 → 10% = 2.00, 25% = 5.00 (4.995 rounded half-up).
 - Re-minting after a refund must reflect the new remaining refundable amount.
 
@@ -200,6 +204,14 @@ As built in P3 (`wardlock/handles.py`, `wardlock/sessions.py`):
 - **Reserving** is one conditional `UPDATE … WHERE state=AVAILABLE AND session_id=… RETURNING`. It is all or nothing: on a shortfall, exactly the rows it changed are reverted, and it raises `HandleConflict`. Concurrent requests can't double-spend a handle. Consume is all or nothing too.
 - **Session end:** AVAILABLE handles expire, while RESERVED ones wait for their hold. A release after the session ended goes to EXPIRED, not AVAILABLE. Expiry is applied lazily when the session is next resolved.
 - **Duplicate handle IDs** in one request collapse to one. **P4 must not sum duplicates**: it should compute amounts over unique handles only.
+
+**Per-unit options (v1.12).** A line-item handle's amount is always `unit × units`, so the units it covers follow from its amount, and no extra column is needed.
+- **What is used:** the sum of the item's RESERVED and CONSUMED line-item handle amounts on that order, across all sessions. Reserving checks `used + requested ≤ unit × quantity` under the order lock.
+  - One cage of two can be refunded, then the other, but never a third.
+  - Options already refunded in full (older handles) count as all units used.
+- **Combinations:** the engine refuses two options for the same item in one request (`INVALID_COMBINATION`); the agent picks "x2" instead.
+- **An option whose item is no longer on the order** is never refundable.
+- **Compat:** per-unit amounts are derivable, so a raw `7.99` for one cage is allowed.
 
 ## 5. Decision engine (pure function, no I/O)
 
@@ -364,7 +376,7 @@ Facts the code must respect:
 ## 8. Webhooks and reconciliation
 
 - `POST /webhooks/paypal`: keep the **raw body**; verify with `verify-webhook-signature` using `PAYPAL_WEBHOOK_ID`; store in `webhook_events` (unique `event_id`); ignore duplicates.
-- `PAYMENT.CAPTURE.REFUNDED`: read the refund `id`, `custom_id`, amount and capture id from the resource **[VERIFY resource shape, including that `custom_id` is echoed back and where the capture id lives]**. PayPal sends this event for Wardlock's *own* refunds too, so reconcile in this order:
+- `PAYMENT.CAPTURE.REFUNDED`: read the refund `id`, `custom_id`, amount and capture id from the resource (the refund object; the capture is its `rel: up` link; confirmed live). PayPal sends this event for Wardlock's *own* refunds too, so reconcile in this order:
   1. A `ledger` row has that `paypal_refund_id` → already recorded, nothing to do.
   2. `custom_id` names a `decisions` row **and** that decision's capture and amount match the event **and** the decision is not already linked to a different refund id → this is Wardlock's own refund whose response was lost. This happens when PayPal processed the call but Wardlock saw timeouts (§6 step 4), or when the webhook arrived before the ledger write. Write the missing `ledger` row and mark the decision's handles CONSUMED. If the decision has an open hold, close it as executed: denying that hold would release the handles and let the agent request the same refund again under a new request id. No alert.
   3. Otherwise → alert `OUT_OF_BAND_REFUND`. Checking capture and amount stops someone outside Wardlock from hiding a refund by copying a real decision id into `custom_id`.
@@ -383,7 +395,7 @@ Facts the code must respect:
 - **Reconciling `PAYMENT.CAPTURE.REFUNDED`:**
   - **Step 2 matches** only when the decision has an idempotency key, is not BLOCK, and has no ledger row, and its capture (from the refund's `rel: up` link) and amount equal the event's. The backfill is `Executor.record_webhook_refund()`, which is the same code path as a normal success.
   - **Alerts:** a FAILED or CANCELLED refund moved no money and is ignored. An unreadable refund event is alerted, failing closed. Every `OUT_OF_BAND_REFUND` alert says why the event did not match.
-  - **`# VERIFY`:** the resource shape (`custom_id` echoed, capture in the `up` link) against a real sandbox event.
+  - **Confirmed live on Nov 9, 2026:** a real sandbox `PAYMENT.CAPTURE.REFUNDED` passed `verify-webhook-signature`. Its resource is the refund (`custom_id` echoed, capture in the `up` link), and a refund made outside Wardlock raised `OUT_OF_BAND_REFUND`.
 - **Trying it by hand:**
   1. Expose the local server: `cloudflared tunnel --url http://localhost:8000` (or `ngrok http 8000`), and copy the https URL.
   2. In the PayPal Developer Dashboard, open your US sandbox app → **Webhooks** → **Add Webhook**. Use URL `https://<tunnel>/webhooks/paypal` with events `PAYMENT.CAPTURE.REFUNDED` and `PAYMENT.CAPTURE.REVERSED`. Copy the **Webhook ID** into `.env` as `PAYPAL_WEBHOOK_ID`, then restart the server.

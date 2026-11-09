@@ -220,9 +220,9 @@ def _reconcile_refund(services: AgentServices, event: dict[str, Any]) -> str:
 def _refund_facts(event: dict[str, Any]) -> dict[str, Any] | None:
     """The refund's id, status, amount, capture and custom_id, or None if any key part is missing.
 
-    # VERIFY: the resource shape of PAYMENT.CAPTURE.REFUNDED against a real sandbox event:
-    # that it is the refund object, that custom_id is echoed back, and that the capture is the
-    # "up" link. If the capture is missing, step b cannot match and the refund is alerted.
+    Confirmed with a real sandbox event (Nov 9, 2026): the resource is the refund object,
+    custom_id is echoed back, and the capture is the "up" link (/v2/payments/captures/{id}).
+    If the capture were ever missing, step b could not match and the refund would be alerted.
     """
     resource = event.get("resource")
     if not isinstance(resource, dict) or not isinstance(resource.get("id"), str):

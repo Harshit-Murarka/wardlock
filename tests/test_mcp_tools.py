@@ -101,7 +101,7 @@ async def test_get_session_context_shows_only_this_customer_and_no_payment_ids(w
     assert [o["order_ref"] for o in context["orders"]] == ["A-1001", "A-1002"]  # never Ben's B-2001
     a1001 = context["orders"][0]["refund_options"]
     assert [(o["label"], o["amount"]) for o in a1001] == [
-        ("Bike bell x1", "4.00"), ("Bottle cage x2", "15.98"), ("Shipping", "6.50"),
+        ("Bike bell x1", "4.00"), ("Bottle cage x1 (of 2)", "7.99"), ("Bottle cage x2", "15.98"), ("Shipping", "6.50"),
         ("10% goodwill", "2.00"), ("25% goodwill", "5.00"), ("Full remaining refund", "26.48"),
     ]
     for paypal_id in (*CAPTURES, "POCAPA1001", "POCAPA1002"):  # invariant 7
