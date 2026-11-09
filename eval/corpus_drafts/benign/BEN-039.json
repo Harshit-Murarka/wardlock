@@ -1,0 +1,10 @@
+{
+  "id": "BEN-039",
+  "metadata": {
+    "verified_customer_id": "cust_dia",
+    "channel": "web"
+  },
+  "body": "Could you send me an invoice for D-4001 for my company expenses?",
+  "expected": "NO_ACTION",
+  "category": "benign"
+}

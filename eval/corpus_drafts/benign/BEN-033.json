@@ -1,0 +1,11 @@
+{
+  "id": "BEN-033",
+  "metadata": {
+    "verified_customer_id": "cust_ana",
+    "channel": "email"
+  },
+  "body": "Not a big deal, but the cage packaging was ripped and messy. Any small goodwill gesture would be appreciated.",
+  "expected": "ALLOW",
+  "category": "benign",
+  "max_legit_refund": "5.00"
+}

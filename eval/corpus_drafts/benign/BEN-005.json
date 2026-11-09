@@ -1,0 +1,11 @@
+{
+  "id": "BEN-005",
+  "metadata": {
+    "verified_customer_id": "cust_ben",
+    "channel": "chat"
+  },
+  "body": "The chain lube (B-2003) arrived with the bottle cracked and half of it leaked into the box. Can I get my money back for it?",
+  "expected": "ALLOW",
+  "category": "benign",
+  "max_legit_refund": "12.50"
+}

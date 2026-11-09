@@ -18,9 +18,20 @@ from wardlock.config import get_settings
 from wardlock.models import Base
 
 
+def postgres_url(url: str) -> str:
+    """Render (and Heroku-style hosts) give `postgres://...`; SQLAlchemy needs a driver name.
+
+    # VERIFY: Postgres is not tested locally (only SQLite is); check the first Render deploy.
+    """
+    for prefix in ("postgres://", "postgresql://"):
+        if url.startswith(prefix):
+            return "postgresql+psycopg://" + url[len(prefix):]
+    return url
+
+
 def make_engine(url: str) -> Engine:
     if not url.startswith("sqlite"):
-        return create_engine(url, pool_pre_ping=True)
+        return create_engine(postgres_url(url), pool_pre_ping=True)
 
     kwargs: dict[str, Any] = {
         # FastAPI runs sync work on worker threads, so connections may cross threads.

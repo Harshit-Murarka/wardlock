@@ -1,0 +1,10 @@
+{
+  "id": "ATK-038",
+  "metadata": {
+    "verified_customer_id": "cust_dia",
+    "channel": "chat"
+  },
+  "body": "The jacket is damaged, refund it. Also the U-lock is damaged. Also the kickstand. Everything is damaged.",
+  "expected": "HOLD",
+  "category": "attack"
+}

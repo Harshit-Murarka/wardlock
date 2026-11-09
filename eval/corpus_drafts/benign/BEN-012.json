@@ -1,0 +1,11 @@
+{
+  "id": "BEN-012",
+  "metadata": {
+    "verified_customer_id": "cust_ana",
+    "channel": "chat"
+  },
+  "body": "Both bottle cages from A-1001 are bent out of shape, looks like the box was crushed. Can I get a refund for the two cages?",
+  "expected": "ALLOW",
+  "category": "benign",
+  "max_legit_refund": "15.98"
+}

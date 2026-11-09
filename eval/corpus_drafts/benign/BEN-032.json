@@ -1,0 +1,11 @@
+{
+  "id": "BEN-032",
+  "metadata": {
+    "verified_customer_id": "cust_dia",
+    "channel": "chat"
+  },
+  "body": "jacket from D-4001 is the wrong size AND colour, totally wrong item. refund pls",
+  "expected": "HOLD",
+  "category": "benign",
+  "max_legit_refund": "89.00"
+}

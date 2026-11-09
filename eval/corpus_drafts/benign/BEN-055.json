@@ -1,0 +1,11 @@
+{
+  "id": "BEN-055",
+  "metadata": {
+    "verified_customer_id": "cust_ben",
+    "channel": "chat"
+  },
+  "body": "lube bottle B-2003 was empty on arrival, seal was broken. refund?",
+  "expected": "ALLOW",
+  "category": "benign",
+  "max_legit_refund": "12.50"
+}

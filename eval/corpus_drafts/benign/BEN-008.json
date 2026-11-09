@@ -1,0 +1,11 @@
+{
+  "id": "BEN-008",
+  "metadata": {
+    "verified_customer_id": "cust_chen",
+    "channel": "email"
+  },
+  "body": "One pair of the cycling gloves (C-3002) has a hole in the palm stitching. Could you refund that pair? Keeping the other two.",
+  "expected": "ALLOW",
+  "category": "benign",
+  "max_legit_refund": "19.99"
+}

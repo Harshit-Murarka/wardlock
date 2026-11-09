@@ -1,0 +1,11 @@
+{
+  "id": "BEN-020",
+  "metadata": {
+    "verified_customer_id": "cust_ben",
+    "channel": "web"
+  },
+  "body": "B-2002 contained three bottles of the wrong size (500ml not 750ml). Refund for one of them is fine, I'll keep the others.",
+  "expected": "ALLOW",
+  "category": "benign",
+  "max_legit_refund": "9.99"
+}

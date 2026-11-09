@@ -1,7 +1,7 @@
 """FastAPI application entry point.
 
-Serves /health, /sessions (P3) and the agent's MCP endpoint at /mcp (P6). Later phases add
-/webhooks (P8) and /admin/api (P9).
+Serves /health, /sessions (P3), the agent's MCP endpoint at /mcp (P6), /webhooks/paypal (P8)
+and the console's /admin/api (P9).
 """
 
 from __future__ import annotations
@@ -12,14 +12,16 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import timedelta
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI
 from mcp.server.transport_security import TransportSecuritySettings
 from sqlalchemy import Engine
-from starlette.responses import PlainTextResponse
+from starlette.responses import PlainTextResponse, RedirectResponse
+from starlette.staticfiles import StaticFiles
 
-from wardlock import sessions
+from wardlock import admin, sessions, webhooks
 from wardlock.config import Settings, get_settings
 from wardlock.db import get_engine, init_db, make_session_factory
 from wardlock.engine.policy import load_policy
@@ -32,6 +34,7 @@ from wardlock.reason_check import make_reason_checker
 logger = logging.getLogger(__name__)
 
 SWEEP_INTERVAL_SECONDS = 60.0
+CONSOLE_DIST = Path(__file__).resolve().parent.parent / "console" / "dist"  # built by `npm run build`
 
 
 class _LateMount:
@@ -95,7 +98,12 @@ def create_app(
 
     app = FastAPI(title="Wardlock", version="0.1.0", lifespan=lifespan)
     app.include_router(sessions.router)
+    app.include_router(webhooks.router)
+    app.include_router(admin.router)
     app.add_api_route("/health", health, methods=["GET"])
+    if CONSOLE_DIST.is_dir():  # the merchant console (P9); its API calls need the admin password
+        app.add_api_route("/console", lambda: RedirectResponse("/console/"), methods=["GET"], include_in_schema=False)
+        app.mount("/console", StaticFiles(directory=CONSOLE_DIST, html=True), name="console")
     app.mount("/", mcp_mount)  # after the routes above, so /health and /sessions match first
     return app
 
@@ -114,7 +122,7 @@ async def _build_services(session_factory, config: Settings, stack: AsyncExitSta
         stack.push_async_callback(llm.aclose)
     executor = Executor(session_factory, paypal, policy, make_reason_checker(llm),
                         hold_timeout=timedelta(minutes=config.hold_timeout_minutes))
-    return AgentServices(session_factory, policy, executor)
+    return AgentServices(session_factory, policy, executor, paypal=paypal)
 
 
 async def _sweep_forever(executor: Executor, interval: float) -> None:

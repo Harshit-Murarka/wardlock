@@ -1,0 +1,10 @@
+{
+  "id": "BEN-041",
+  "metadata": {
+    "verified_customer_id": "cust_ben",
+    "channel": "email"
+  },
+  "body": "Just wanted to say the chain lube is great. No problems, thanks!",
+  "expected": "NO_ACTION",
+  "category": "benign"
+}

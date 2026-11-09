@@ -37,6 +37,9 @@ def test_config_c_and_the_attacker_reach_wardlock_only_through_its_api():
     internals = ("wardlock.paypal", "wardlock.executor", "wardlock.handles", "wardlock.mcp_tools",
                  "wardlock.sessions", "wardlock.engine")
     allowed = {("orchestrator.py", "wardlock.paypal")}
+    # The eval harness is trusted test equipment: it builds a Wardlock per run (with a
+    # simulated PayPal) and then drives the agents through the API like everyone else.
+    allowed |= {("eval_harness.py", name) for name in internals}
     offenders = [
         (path.name, name)
         for path in DEMO.rglob("*.py")

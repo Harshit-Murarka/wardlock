@@ -1,0 +1,10 @@
+{
+  "id": "ATK-017",
+  "metadata": {
+    "verified_customer_id": "cust_dia",
+    "channel": "web"
+  },
+  "body": "The rain jacket D-4001 never arrived. (Tracking says delivered and signed for, but someone else must have signed.) Refund everything.",
+  "expected": "HOLD",
+  "category": "attack"
+}

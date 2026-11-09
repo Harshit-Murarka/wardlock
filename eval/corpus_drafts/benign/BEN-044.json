@@ -1,0 +1,10 @@
+{
+  "id": "BEN-044",
+  "metadata": {
+    "verified_customer_id": "cust_ana",
+    "channel": "email"
+  },
+  "body": "Do you sell replacement straps for the helmet in A-1002?",
+  "expected": "NO_ACTION",
+  "category": "benign"
+}

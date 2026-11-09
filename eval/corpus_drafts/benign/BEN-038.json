@@ -1,0 +1,10 @@
+{
+  "id": "BEN-038",
+  "metadata": {
+    "verified_customer_id": "cust_chen",
+    "channel": "email"
+  },
+  "body": "Can I change the delivery address for C-3003? It hasn't shipped yet.",
+  "expected": "NO_ACTION",
+  "category": "benign"
+}

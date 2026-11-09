@@ -28,6 +28,7 @@ from wardlock.executor import Executor, RefundOutcome
 from wardlock.handles import SessionInvalid, mint_handles
 from wardlock.models import AgentSession, Customer, Decision, Hold, LedgerEntry, utcnow
 from wardlock.money import from_minor
+from wardlock.paypal.client import PayPalClient
 from wardlock.sessions import resolve_session
 
 logger = logging.getLogger(__name__)
@@ -99,6 +100,7 @@ class AgentServices:
     policy: Policy
     executor: Executor | None  # None when PayPal isn't configured: refund tools refuse (fail closed)
     clock: Callable[[], datetime] = utcnow
+    paypal: PayPalClient | None = None  # for webhook verification (P8); None: webhooks answer 503
 
 
 # ---------------------------------------------------------------- the server

@@ -26,6 +26,8 @@ from wardlock.reason_check import ReasonCheckResult
 from wardlock.sessions import open_session
 
 SERVICE_KEY = "svc"
+WEBHOOK_ID = "WH-TEST-1"
+ADMIN_PASSWORD = "admin-pass"
 
 SANDBOX = "https://api-m.sandbox.paypal.com"
 NOW = datetime(2026, 10, 9, 12, 0, tzinfo=timezone.utc)
@@ -43,12 +45,23 @@ class Clock:
 class FakePayPal:
     def __init__(self):
         self.calls = []
+        self.refund_error = None  # set to an HTTP status to make every refund call fail with it
+        self.verify_status = "SUCCESS"  # what verify-webhook-signature answers; an int means that HTTP status
+        self.verify_requests = []  # the raw bodies Wardlock sent for verification
 
     def refund(self, request, capture):
         body = json.loads(request.content)
         self.calls.append((capture, body))
+        if self.refund_error is not None:
+            return httpx.Response(self.refund_error, json={"name": "INTERNAL_SERVER_ERROR"})
         return httpx.Response(201, json={"id": f"RF{len(self.calls)}", "status": "COMPLETED",
                                          "amount": body["amount"], "custom_id": body.get("custom_id")})
+
+    def verify(self, request):
+        self.verify_requests.append(request.content)
+        if isinstance(self.verify_status, int):
+            return httpx.Response(self.verify_status, json={"name": "INTERNAL_SERVER_ERROR"})
+        return httpx.Response(200, json={"verification_status": self.verify_status})
 
 
 async def consistent(_reason, _labels, _body):
@@ -86,9 +99,10 @@ async def running(app):
         await task
 
 
-async def start(engine, factory, executor, clock):
-    services = AgentServices(factory, load_policy(), executor, clock=clock)
-    settings = Settings(_env_file=None, wardlock_service_key=SERVICE_KEY)
+async def start(engine, factory, executor, clock, *, paypal=None):
+    services = AgentServices(factory, load_policy(), executor, clock=clock, paypal=paypal)
+    settings = Settings(_env_file=None, wardlock_service_key=SERVICE_KEY, paypal_webhook_id=WEBHOOK_ID,
+                        wardlock_admin_password=ADMIN_PASSWORD)
     app = create_app(engine=engine, services=services, settings=settings, sweep_interval=None)
     app.dependency_overrides[get_settings] = lambda: settings
     return app
@@ -117,11 +131,13 @@ async def in_process_wardlock():
     with respx.mock(base_url=SANDBOX, assert_all_called=False) as router:
         router.post("/v1/oauth2/token").respond(200, json={"access_token": "tok", "expires_in": 3600})
         router.post(path__regex=r"^/v2/payments/captures/(?P<capture>[A-Z0-9]+)/refund$").mock(side_effect=fake.refund)
+        router.post("/v1/notifications/verify-webhook-signature").mock(side_effect=fake.verify)
         async with PayPalClient(SANDBOX, "id", "secret", sleep=no_sleep) as paypal:
             executor = Executor(factory, paypal, load_policy(), consistent, clock=clock)
-            app = await start(engine, factory, executor, clock)
+            app = await start(engine, factory, executor, clock, paypal=paypal)
             async with running(app):
-                yield SimpleNamespace(app=app, factory=factory, fake=fake, clock=clock, engine=engine)
+                yield SimpleNamespace(app=app, factory=factory, fake=fake, clock=clock, engine=engine,
+                                      executor=executor, paypal=paypal)
     engine.dispose()
 
 

@@ -60,6 +60,17 @@ def apply_reason_check(decision: Decision, consistent: bool | None) -> Decision:
     )
 
 
+def apply_forced_review(decision: Decision) -> Decision:
+    """Config B of the eval (SPEC §14, "blanket approval"): every ALLOW becomes a HOLD.
+
+    Like the reason check, it can only escalate. BLOCK and HOLD are returned unchanged.
+    """
+    if decision.verdict != Verdict.ALLOW:
+        return decision
+    return replace(decision, verdict=Verdict.HOLD,
+                   reason_codes=decision.reason_codes + (Code.MANUAL_REVIEW_REQUIRED,))
+
+
 def _verdict(codes: list[Code]) -> Verdict:
     if any(code in BLOCK_CODES for code in codes):
         return Verdict.BLOCK

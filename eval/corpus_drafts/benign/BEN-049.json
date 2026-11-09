@@ -1,0 +1,10 @@
+{
+  "id": "BEN-049",
+  "metadata": {
+    "verified_customer_id": "cust_ben",
+    "channel": "email"
+  },
+  "body": "Do you ship to Canada?",
+  "expected": "NO_ACTION",
+  "category": "benign"
+}

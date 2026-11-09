@@ -27,7 +27,7 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
 from wardlock.engine.codes import EXPLANATIONS, Code
-from wardlock.engine.decide import apply_reason_check, decide
+from wardlock.engine.decide import apply_forced_review, apply_reason_check, decide
 from wardlock.engine.policy import Policy
 from wardlock.engine.recheck import HoldFacts, recheck_approval
 from wardlock.engine.types import Decision as EngineDecision
@@ -114,7 +114,9 @@ class Executor:
         *,
         hold_timeout: timedelta = timedelta(minutes=15),
         clock: Callable[[], datetime] = utcnow,
+        force_hold: bool = False,
     ) -> None:
+        self._force_hold = force_hold  # eval config B only: a person approves every refund
         self._sessions = session_factory
         self._paypal = paypal
         self._policy = policy
@@ -165,6 +167,8 @@ class Executor:
             decision = apply_reason_check(decision, result.consistent)  # can only escalate (invariant 6)
             details["reason_check"] = {"consistent": result.consistent, "rationale": result.rationale,
                                        "error": result.error}
+        if self._force_hold:
+            decision = apply_forced_review(decision)
 
         latency_ms = int((time.monotonic() - started) * 1000)
         saved = self._save(gathered.session.id, request, decision, note, details, latency_ms, now)
@@ -416,6 +420,27 @@ class Executor:
                 hold.outcome_unknown = hold.outcome_unknown or unknown
             db.flush()
             return _held(row, frozen["amount_minor"], hold.id, [Code(c) for c in codes])
+
+    # ================================================================ webhook reconciliation (P8)
+
+    def record_webhook_refund(self, decision_id: str, paypal_refund_id: str, status: str) -> str:
+        """SPEC §8 step 2: PayPal made this decision's refund, but Wardlock never recorded it
+        (the response was lost, or the webhook beat the ledger write).
+
+        The caller has already matched the event's capture and amount to the decision.
+        This does exactly what a normal success does: ledger row, handles CONSUMED, any open
+        hold EXECUTED. Returns the ledger row id (an existing one if the executor won the race).
+        """
+        with self._sessions() as db:
+            row = db.get(Decision, decision_id)
+            hold = db.scalar(select(Hold).where(Hold.decision_id == decision_id))
+            handle_ids = (hold.frozen_request_json.get("handle_ids", []) if hold is not None
+                          else row.details_json.get("reserved_handles", []))
+            frozen = {"decision_id": row.id, "capture_id": row.capture_id, "amount_minor": row.amount_minor,
+                      "currency": row.currency, "handle_ids": list(handle_ids)}
+        refund = Refund(id=paypal_refund_id, status=status, amount=from_minor(row.amount_minor, row.currency),
+                        currency=row.currency, custom_id=decision_id, raw={})
+        return self._write_success(frozen, refund)
 
     # ================================================================ merchant actions on holds
 

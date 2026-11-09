@@ -262,3 +262,12 @@ def test_parents_and_children_can_be_saved_in_one_flush(db):
     db.flush()
 
     assert db.get(Hold, hold.id).decision_id == "dec_x"
+
+
+def test_render_postgres_urls_get_the_psycopg_driver():
+    from wardlock.db import postgres_url
+
+    assert postgres_url("postgres://u:p@host:5432/db") == "postgresql+psycopg://u:p@host:5432/db"
+    assert postgres_url("postgresql://u:p@host/db") == "postgresql+psycopg://u:p@host/db"
+    assert postgres_url("postgresql+psycopg://u:p@host/db") == "postgresql+psycopg://u:p@host/db"
+    assert postgres_url("sqlite:///./wardlock.db") == "sqlite:///./wardlock.db"

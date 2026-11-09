@@ -21,6 +21,7 @@ class Code(enum.StrEnum):
     AMOUNT_NOT_DERIVABLE = "AMOUNT_NOT_DERIVABLE"  # compat only
     REASON_NOT_SUPPORTED_BY_TICKET = "REASON_NOT_SUPPORTED_BY_TICKET"
     DEPENDENCY_UNAVAILABLE = "DEPENDENCY_UNAVAILABLE"
+    MANUAL_REVIEW_REQUIRED = "MANUAL_REVIEW_REQUIRED"  # eval config B: every refund needs a person
     # Executor outcomes (SPEC §6), never produced by decide(): PayPal itself said no.
     PAYPAL_REJECTED = "PAYPAL_REJECTED"  # a 4xx such as REFUND_AMOUNT_EXCEEDED
     PAYPAL_REFUND_FAILED = "PAYPAL_REFUND_FAILED"  # the refund came back FAILED or CANCELLED
@@ -70,6 +71,7 @@ EXPLANATIONS: dict[Code, str] = {
     Code.AMOUNT_NOT_DERIVABLE: "The amount does not match any refund option for this order. A person will review it.",
     Code.REASON_NOT_SUPPORTED_BY_TICKET: "The ticket does not clearly support this reason. A person will review it.",
     Code.DEPENDENCY_UNAVAILABLE: "A system Wardlock relies on did not answer. A person will review it.",
+    Code.MANUAL_REVIEW_REQUIRED: "Every refund on this shop is reviewed by a person before it is made.",
     Code.PAYPAL_REJECTED: "PayPal declined this refund. No money moved.",
     Code.PAYPAL_REFUND_FAILED: "PayPal could not complete this refund. No money moved.",
 }

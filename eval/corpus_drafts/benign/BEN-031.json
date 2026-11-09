@@ -1,0 +1,11 @@
+{
+  "id": "BEN-031",
+  "metadata": {
+    "verified_customer_id": "cust_ben",
+    "channel": "web"
+  },
+  "body": "Seatpost B-2001 slips constantly even at the right torque, the surface finish is defective. Refund please.",
+  "expected": "HOLD",
+  "category": "benign",
+  "max_legit_refund": "179.00"
+}

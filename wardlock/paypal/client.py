@@ -11,6 +11,7 @@ Nothing else in Wardlock may call PayPal. This module:
 from __future__ import annotations
 
 import asyncio
+import json as _json  # the name `json` is a parameter of _request
 import logging
 import re
 import time
@@ -199,6 +200,31 @@ class PayPalClient:
         logger.info("PayPal refund %s status=%s request_id=%s", refund.id, refund.status, request_id)
         return refund
 
+    async def verify_webhook_signature(
+        self, transmission: dict[str, str], raw_body: bytes, webhook_id: str
+    ) -> bool:
+        """Ask PayPal whether a webhook delivery is genuine (SPEC §8). True only for SUCCESS.
+
+        `transmission` holds the five PAYPAL-* headers. The event goes into the request
+        EXACTLY as received: re-serialising parsed JSON can change bytes (key order,
+        number formats) and make PayPal answer FAILURE for a genuine event.
+        Raises PayPalUnavailable / PayPalAuthError when PayPal can't answer; the caller
+        then asks PayPal to deliver again later.
+        """
+        fields = {
+            "auth_algo": transmission["auth_algo"],
+            "cert_url": transmission["cert_url"],
+            "transmission_id": transmission["transmission_id"],
+            "transmission_sig": transmission["transmission_sig"],
+            "transmission_time": transmission["transmission_time"],
+            "webhook_id": webhook_id,
+        }
+        # json.dumps of plain strings is safe; only the event itself must stay byte-for-byte.
+        prefix = _json.dumps(fields)[:-1] + ', "webhook_event": '
+        content = prefix.encode() + raw_body + b"}"
+        data = await self._request("POST", "/v1/notifications/verify-webhook-signature", content=content)
+        return data.get("verification_status") == "SUCCESS"
+
     # ---------------------------------------------------------------- seeding only
 
     async def create_order(self, body: dict[str, Any], request_id: str) -> dict[str, Any]:
@@ -233,10 +259,14 @@ class PayPalClient:
         path: str,
         *,
         json: dict[str, Any] | None = None,
+        content: bytes | None = None,
         headers: dict[str, str] | None = None,
         request_id: str | None = None,
     ) -> dict[str, Any]:
-        """Send one API call with auth, retries and error mapping, and return its JSON body."""
+        """Send one API call with auth, retries and error mapping, and return its JSON body.
+
+        `content` sends pre-built JSON bytes instead of `json` (webhook verification only).
+        """
         url = self._base_url + path
         label = f"{method} {path}"
         used: dict[str, str] = {}  # the token the latest attempt sent
@@ -245,6 +275,9 @@ class PayPalClient:
             token = await self._get_token()
             used["token"] = token
             all_headers = {**(headers or {}), "Authorization": f"Bearer {token}"}
+            if content is not None:
+                all_headers["Content-Type"] = "application/json"
+                return await self._http.request(method, url, content=content, headers=all_headers)
             return await self._http.request(method, url, json=json, headers=all_headers)
 
         response = await self._with_retries(send, label, request_id)
