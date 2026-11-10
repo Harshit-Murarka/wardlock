@@ -14,6 +14,7 @@ Built for the PayPal AI Hackathon (2026). **Try it now, no account needed:** ope
 
 | | |
 |---|---|
+| **Demo video** | [Watch on YouTube](https://youtu.be/OE26M_dynTg) (under 3 minutes) |
 | **Live demo** | https://wardlock.onrender.com (console at [`/console/`](https://wardlock.onrender.com/console/), agent endpoint at [`/mcp`](https://wardlock.onrender.com/mcp)) |
 | **First request is slow** | The demo runs on Render's free plan and sleeps when idle. The first page after a pause takes 50–60 seconds; after that it answers in milliseconds. |
 | **What to look at** | [The console in two minutes](#for-judges-the-live-console-in-two-minutes) · [the measured results](#does-it-work-the-numbers) · [run it yourself](#quick-start-local-about-5-minutes) |
