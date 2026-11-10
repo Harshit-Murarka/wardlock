@@ -47,8 +47,10 @@ services:
         sync: false
       - key: SESSION_TTL_MINUTES
         value: "30"
+      # How long a held refund waits for the merchant before it expires. A shop would use minutes
+      # (the default is 15); the public demo keeps its example hold open through the judging period.
       - key: HOLD_TIMEOUT_MINUTES
-        value: "15"
+        value: "129600"
 
 databases:
   - name: wardlock-db
