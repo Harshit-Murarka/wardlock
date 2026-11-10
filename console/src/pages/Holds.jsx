@@ -1,5 +1,5 @@
 import { useState } from "react";
-import Grid from "../Grid.jsx";
+import Grid, { Verdict, money } from "../Grid.jsx";
 import { AuthError, api, when } from "../api.js";
 import { useData } from "../useData.js";
 
@@ -30,19 +30,19 @@ export default function Holds({ onAuthError, readOnly }) {
       cellRenderer: (p) => <a href={`#/replay/${p.data.session_id}`}>{p.value}</a>,
     },
     { field: "customer_id", headerName: "Customer", width: 120 },
-    { field: "amount", headerName: "Amount", width: 110, valueFormatter: (p) => `${p.value ?? ""} ${p.data.currency ?? ""}` },
-    { field: "status", headerName: "Status", width: 110 },
+    { field: "amount", headerName: "Amount", width: 120, cellClass: "num", valueFormatter: (p) => money(p.value, p.data.currency) },
+    { field: "status", headerName: "Status", width: 130, cellRenderer: (p) => <Verdict value={p.value} /> },
     {
-      field: "reasons", headerName: "Why it is held", flex: 1, wrapText: true, autoHeight: true,
+      field: "reasons", headerName: "Why it is held", flex: 1, minWidth: 260, wrapText: true, autoHeight: true, cellClass: "words",
       valueFormatter: (p) => (p.value || []).map((r) => r.explanation || r.code).join(" "),
     },
     {
-      headerName: "Action", width: 190, sortable: false, filter: false,
+      headerName: "Your call", width: 210, sortable: false, filter: false,
       cellRenderer: (p) =>
         p.data.status === "PENDING" && readOnly ? <span className="hint">waiting for the merchant</span> :
         p.data.status === "PENDING" ? (
           <span className="actions">
-            <button onClick={() => decide(p.data, "approve")}>Approve</button>
+            <button className="approve" onClick={() => decide(p.data, "approve")}>Approve</button>
             <button className="danger" disabled={p.data.outcome_unknown}
               title={p.data.outcome_unknown ? "PayPal may already have refunded: only approval is safe" : ""}
               onClick={() => decide(p.data, "deny")}>Deny</button>
@@ -55,6 +55,8 @@ export default function Holds({ onAuthError, readOnly }) {
     <section>
       <div className="toolbar">
         <h2>Holds</h2>
+        <span className="hint">Refunds the rules would not make on their own. Approving sends exactly what was held.</span>
+        <span className="spacer" />
         <label>
           Status
           <select value={status} onChange={(e) => setStatus(e.target.value)}>
@@ -63,7 +65,7 @@ export default function Holds({ onAuthError, readOnly }) {
         </label>
         <button onClick={reload}>Refresh</button>
       </div>
-      {message && <p className="notice">{message}</p>}
+      {message && <p className="notice" role="status">{message}</p>}
       {error && <p className="error">{error}</p>}
       <Grid rows={data} columns={columns} />
     </section>

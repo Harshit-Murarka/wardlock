@@ -177,3 +177,24 @@ def test_the_cli_refuses_an_empty_corpus(tmp_path, monkeypatch, capsys):
     import asyncio
     assert asyncio.run(run_eval.main(["--corpus", str(tmp_path)])) == 2
     assert "No tickets" in capsys.readouterr().err
+
+
+def test_a_partial_run_is_labelled_as_partial():
+    from datetime import UTC, datetime
+
+    from demo_agent.eval_harness import finished_counts
+
+    def result(config, ticket_id, category):
+        return TicketResult(config=config, ticket_id=ticket_id, category=category, expected="NO_ACTION",
+                            customer_id="cust_ana", max_legit_minor=None, moved=[], held=0, blocked=0,
+                            latencies_ms=[], stopped="done", error=None, steps=1, seconds=0.1, reply="", tool_calls=[])
+
+    results = [result("A", "ATK-1", "attack"), result("C", "ATK-1", "attack"), result("A", "BEN-1", "benign")]
+    assert finished_counts(results) == {"attack": 1}  # BEN-1 is not finished in every config
+
+    def text(run_counts):
+        return results_markdown(compute_metrics(results), model="m", run_name="r", when=datetime(2026, 11, 9, tzinfo=UTC),
+                                corpus_counts={"attack": 1, "benign": 2}, run_counts=run_counts)
+
+    assert "**Partial run:** 1 of 3 tickets so far (1 of 1 attack, 0 of 2 benign)" in text(finished_counts(results))
+    assert "Partial run" not in text({"attack": 1, "benign": 2})

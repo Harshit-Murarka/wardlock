@@ -2,9 +2,14 @@
 
 Auth: user "admin", password WARDLOCK_ADMIN_PASSWORD, compared in constant time. Unset ->
 503 for the admin (fail closed). With CONSOLE_PUBLIC_READONLY=1 anyone may also sign in as
-"viewer" (any password) for a public demo, but only to read: every POST from it is a 403. A 401 deliberately has NO `WWW-Authenticate` header, so a
-browser never caches the credentials: the console sends them itself on every call, and a
-malicious page in another tab cannot ride on a cached login to approve a hold (CSRF).
+"viewer" (any password) for a public demo, but only to read: every POST from it is a 403.
+
+A 401 deliberately has NO `WWW-Authenticate` header, so a browser never caches the
+credentials: the console sends them itself on every call, and a malicious page in another
+tab cannot ride on a cached login to approve a hold (CSRF).
+
+Wrong passwords are counted per client address. After MAX_FAILED_LOGINS in a minute that
+address gets 429 until the minute has passed, which makes guessing the password impractical.
 
 Everything is read from existing tables. Approve and deny go through the executor, which
 re-checks and refunds at most once.
@@ -15,6 +20,9 @@ from __future__ import annotations
 import base64
 import binascii
 import hmac
+import time
+from collections import deque
+from collections.abc import Callable
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -25,6 +33,7 @@ from wardlock.config import Settings, get_settings
 from wardlock.db import get_db
 from wardlock.engine.codes import EXPLANATIONS, Code
 from wardlock.enums import HoldStatus, Verdict
+from wardlock.handles import NOT_REFUNDED_STATUSES
 from wardlock.models import AgentSession, Alert, Decision, Hold, LedgerEntry
 from wardlock.money import from_minor
 from wardlock.replay import segments
@@ -33,6 +42,61 @@ ADMIN_USER = "admin"
 VIEWER_USER = "viewer"
 READ_METHODS = ("GET", "HEAD")
 MAX_ROWS = 500
+PREVIEW_CHARS = 90  # of the ticket text, in the list of tickets
+MAX_FAILED_LOGINS = 10
+FAILED_LOGIN_WINDOW_SECONDS = 60.0
+MAX_TRACKED_CLIENTS = 10_000  # bounds memory if someone cycles through addresses
+
+
+class LoginThrottle:
+    """Remembers recent wrong passwords per client address (in memory, per process).
+
+    Behind a proxy that hides the real address (Render), many visitors share one address, so
+    the limit acts on all of them together. That is the safe direction: an attacker can at
+    worst delay the merchant's sign-in by a minute, never get more guesses.
+    """
+
+    def __init__(self, limit: int = MAX_FAILED_LOGINS, window: float = FAILED_LOGIN_WINDOW_SECONDS,
+                 clock: Callable[[], float] = time.monotonic) -> None:
+        self._limit, self._window, self._clock = limit, window, clock
+        self._failures: dict[str, deque[float]] = {}
+
+    def retry_after(self, client: str) -> int:
+        """0 if this client may try now, else the seconds until it may."""
+        recent = self._recent(client)
+        if len(recent) < self._limit:
+            return 0
+        return max(1, int(recent[0] + self._window - self._clock()) + 1)
+
+    def record_failure(self, client: str) -> None:
+        if client not in self._failures and len(self._failures) >= MAX_TRACKED_CLIENTS:
+            self._forget_idle()
+            if len(self._failures) >= MAX_TRACKED_CLIENTS:
+                self._failures.pop(next(iter(self._failures)))  # still full: drop the oldest entry
+        self._failures.setdefault(client, deque()).append(self._clock())
+
+    def _recent(self, client: str) -> deque[float]:
+        recent = self._failures.get(client)
+        if recent is None:
+            return deque()
+        cutoff = self._clock() - self._window
+        while recent and recent[0] <= cutoff:
+            recent.popleft()
+        if not recent:
+            del self._failures[client]
+        return recent
+
+    def _forget_idle(self) -> None:
+        for client in list(self._failures):
+            self._recent(client)
+
+
+def _throttle(request: Request) -> LoginThrottle:
+    """One throttle per app, created on first use (so every test app starts clean)."""
+    throttle = getattr(request.app.state, "login_throttle", None)
+    if throttle is None:
+        throttle = request.app.state.login_throttle = LoginThrottle()
+    return throttle
 
 
 def require_admin(request: Request, settings: Settings = Depends(get_settings)) -> str:
@@ -52,10 +116,17 @@ def require_admin(request: Request, settings: Settings = Depends(get_settings)) 
     password = settings.wardlock_admin_password.get_secret_value()
     if not password:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "The console is not configured.")
+    throttle, client = _throttle(request), (request.client.host if request.client else "unknown")
+    wait = throttle.retry_after(client)
+    if wait:
+        # Checked before the password is even looked at, so a blocked client learns nothing.
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "Too many wrong passwords. Try again in a minute.",
+                            headers={"Retry-After": str(wait)})
     # Both comparisons always run, so timing reveals nothing about which part was wrong.
     user_ok = hmac.compare_digest(user.encode(), ADMIN_USER.encode())
     password_ok = hmac.compare_digest(given.encode(), password.encode())
     if not (user_ok and password_ok):
+        throttle.record_failure(client)
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Wrong console password.")  # no WWW-Authenticate
     return ADMIN_USER
 
@@ -83,6 +154,30 @@ def _executor(request: Request):
     if executor is None:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "PayPal is not configured, so holds cannot be decided.")
     return executor
+
+
+# ---------------------------------------------------------------- summary
+
+
+@router.get("/summary")
+def summary(db: Db) -> dict[str, Any]:
+    """The counts in the strip at the top of the console. All of it is counted by the database."""
+    verdicts = {str(v): n for v, n in db.execute(select(Decision.verdict, func.count()).group_by(Decision.verdict))}
+    refunded = db.execute(
+        select(LedgerEntry.currency, func.sum(LedgerEntry.amount_minor), func.count())
+        .where(LedgerEntry.status.not_in(NOT_REFUNDED_STATUSES)).group_by(LedgerEntry.currency)
+        .order_by(LedgerEntry.currency)
+    ).all()
+    return {
+        "tickets": db.scalar(select(func.count()).select_from(AgentSession)),
+        "allowed": verdicts.get(Verdict.ALLOW.value, 0),
+        "held": verdicts.get(Verdict.HOLD.value, 0),
+        "blocked": verdicts.get(Verdict.BLOCK.value, 0),
+        "pending_holds": db.scalar(select(func.count()).select_from(Hold).where(Hold.status == HoldStatus.PENDING)),
+        "open_alerts": db.scalar(select(func.count()).select_from(Alert).where(Alert.acknowledged.is_(False))),
+        "refunded": [{"amount": _money(int(total), currency), "currency": currency, "refunds": count}
+                     for currency, total, count in refunded],
+    }
 
 
 # ---------------------------------------------------------------- decisions
@@ -190,10 +285,17 @@ def list_ledger(db: Db) -> list[dict[str, Any]]:
 
 @router.get("/sessions")
 def list_sessions(db: Db) -> list[dict[str, Any]]:
-    counts = dict(db.execute(select(Decision.session_id, func.count()).group_by(Decision.session_id)).all())
+    counts: dict[str, dict[str, int]] = {}
+    for session_id, verdict, n in db.execute(
+            select(Decision.session_id, Decision.verdict, func.count()).group_by(Decision.session_id, Decision.verdict)):
+        counts.setdefault(session_id, {})[str(verdict)] = n
     rows = db.scalars(select(AgentSession).order_by(AgentSession.created_at.desc()).limit(MAX_ROWS))
     return [{"id": s.id, "ticket_id": s.ticket_id, "customer_id": s.customer_id, "created_at": s.created_at.isoformat(),
-             "status": s.status, "refund_calls": counts.get(s.id, 0)} for s in rows]
+             "status": s.status, "refund_calls": sum(counts.get(s.id, {}).values()),
+             "allowed": counts.get(s.id, {}).get(Verdict.ALLOW.value, 0),
+             "held": counts.get(s.id, {}).get(Verdict.HOLD.value, 0),
+             "blocked": counts.get(s.id, {}).get(Verdict.BLOCK.value, 0),
+             "preview": " ".join(s.ticket_body.split())[:PREVIEW_CHARS]} for s in rows]
 
 
 @router.get("/sessions/{session_id}/replay")

@@ -214,3 +214,79 @@ async def test_the_landing_page_mentions_the_demo_only_when_it_is_public(wl):
     assert "View the live demo" not in (await call(wl, "GET", "/", {})).text
     public_demo(wl)
     assert "View the live demo" in (await call(wl, "GET", "/", {})).text
+
+
+# ---------------------------------------------------------------- password guessing and response headers
+
+
+async def test_repeated_wrong_passwords_lock_the_console_for_a_while(wl):
+    from wardlock.admin import MAX_FAILED_LOGINS
+
+    for _ in range(MAX_FAILED_LOGINS):
+        assert (await call(wl, "GET", "/admin/api/alerts", basic(password="guess"))).status_code == 401
+    locked = await call(wl, "GET", "/admin/api/alerts", basic(password="guess"))
+    assert locked.status_code == 429
+    assert int(locked.headers["retry-after"]) >= 1
+    # Even the right password waits, so a lucky guess during the lock tells an attacker nothing.
+    assert (await call(wl, "GET", "/admin/api/alerts")).status_code == 429
+
+
+def test_the_login_throttle_forgets_failures_after_its_window():
+    from wardlock.admin import LoginThrottle
+
+    now = [0.0]
+    throttle = LoginThrottle(limit=3, window=60.0, clock=lambda: now[0])
+    for _ in range(3):
+        throttle.record_failure("1.2.3.4")
+    assert throttle.retry_after("1.2.3.4") > 0
+    assert throttle.retry_after("5.6.7.8") == 0  # other clients are not affected
+    now[0] = 61.0
+    assert throttle.retry_after("1.2.3.4") == 0
+
+
+async def test_wrong_passwords_never_lock_out_the_public_demo_viewer(wl):
+    from wardlock.admin import MAX_FAILED_LOGINS
+
+    settings = Settings(_env_file=None, wardlock_admin_password=ADMIN_PASSWORD, console_public_readonly=True)
+    wl.app.dependency_overrides[get_settings] = lambda: settings
+    for _ in range(MAX_FAILED_LOGINS + 1):
+        await call(wl, "GET", "/admin/api/alerts", basic(password="guess"))
+    assert (await call(wl, "GET", "/admin/api/alerts", basic(user="viewer", password="x"))).status_code == 200
+
+
+@pytest.mark.parametrize("path", ["/", "/health", "/admin/api/alerts", "/no-such-page"])
+async def test_every_response_carries_the_security_headers(wl, path):
+    response = await call(wl, "GET", path, {})
+    assert response.headers["x-frame-options"] == "DENY"  # the console can never be framed (clickjacking)
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert response.headers["referrer-policy"] == "no-referrer"
+    csp = response.headers["content-security-policy"]
+    assert "frame-ancestors 'none'" in csp and "script-src 'self'" in csp
+    assert "strict-transport-security" not in response.headers  # plain http: HSTS would be ignored anyway
+
+
+async def test_https_requests_get_hsts_also_behind_a_proxy(wl):
+    response = await call(wl, "GET", "/health", {"X-Forwarded-Proto": "https"})
+    assert "max-age" in response.headers["strict-transport-security"]
+
+
+# ---------------------------------------------------------------- summary strip
+
+
+async def test_the_summary_counts_verdicts_holds_alerts_and_refunded_money(wl):
+    await ask_for(wl, "Bike bell x1")  # ALLOW, 4.00 refunded
+    await ask_for(wl, "Shipping", ReasonCode.NOT_RECEIVED)  # HOLD
+    with wl.factory() as db, db.begin():
+        db.add(Alert(kind=AlertKind.OUT_OF_BAND_REFUND, details_json={"refund_id": "R1"}))
+
+    data = (await call(wl, "GET", "/admin/api/summary")).json()
+    assert (data["tickets"], data["allowed"], data["held"], data["blocked"]) == (2, 1, 1, 0)
+    assert (data["pending_holds"], data["open_alerts"]) == (1, 1)
+    assert data["refunded"] == [{"amount": "4.00", "currency": "USD", "refunds": 1}]
+
+
+async def test_the_ticket_list_says_how_each_ticket_ended(wl):
+    await ask_for(wl, "Bike bell x1")
+    [row] = (await call(wl, "GET", "/admin/api/sessions")).json()
+    assert (row["refund_calls"], row["allowed"], row["held"], row["blocked"]) == (1, 1, 0, 0)
+    assert row["preview"] == "My bike bell arrived scratched."

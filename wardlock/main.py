@@ -7,7 +7,6 @@ and the console's /admin/api (P9).
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
 from collections.abc import AsyncIterator
 from contextlib import AsyncExitStack, asynccontextmanager
@@ -85,6 +84,65 @@ class _RejectNulInUrl:
         await self.app(scope, receive, send)
 
 
+# Sent with every response. The console signs in with a password and can approve refunds, so it
+# must never be framed by another site (clickjacking) and may only run its own scripts.
+_BASE_HEADERS = [
+    (b"x-content-type-options", b"nosniff"),
+    (b"x-frame-options", b"DENY"),
+    (b"referrer-policy", b"no-referrer"),
+    (b"cross-origin-opener-policy", b"same-origin"),
+    (b"permissions-policy", b"camera=(), microphone=(), geolocation=(), payment=()"),
+]
+# 'unsafe-inline' is for styles only (AG Grid and the landing page set them inline); scripts are never inline.
+_CSP = (b"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
+        b"font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; "
+        b"frame-ancestors 'none'")
+# /docs and /redoc load FastAPI's API explorer from a CDN, so they only get the framing rule.
+_CSP_DOCS = b"frame-ancestors 'none'"
+_DOCS_PATHS = ("/docs", "/redoc")
+
+
+class _SecurityHeaders:
+    """Adds the headers above to every HTTP response, including errors and the mounted apps."""
+
+    def __init__(self, app) -> None:
+        self.app = app
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        csp = _CSP_DOCS if scope.get("path", "").startswith(_DOCS_PATHS) else _CSP
+        extra = [*_BASE_HEADERS, (b"content-security-policy", csp)]
+        if _is_https(scope):
+            extra.append((b"strict-transport-security", b"max-age=31536000"))
+        if _is_console_page(scope.get("path", "")):
+            # Always re-check the page itself, so a new deploy shows up at once. Its scripts and
+            # styles have a content hash in their names and can be cached as long as you like.
+            extra.append((b"cache-control", b"no-cache"))
+
+        async def send_with_headers(message) -> None:
+            if message["type"] == "http.response.start":
+                present = {name.lower() for name, _value in message.get("headers", [])}
+                message = {**message, "headers": [*message.get("headers", []),
+                                                  *[(n, v) for n, v in extra if n not in present]]}
+            await send(message)
+
+        await self.app(scope, receive, send_with_headers)
+
+
+def _is_console_page(path: str) -> bool:
+    return path.startswith("/console") and not path.startswith("/console/assets/")
+
+
+def _is_https(scope) -> bool:
+    """True behind Render's proxy too, which ends TLS and says so in X-Forwarded-Proto."""
+    if scope.get("scheme") == "https":
+        return True
+    forwarded = dict(scope.get("headers") or []).get(b"x-forwarded-proto", b"")
+    return forwarded.split(b",")[0].strip().lower() == b"https"
+
+
 def create_app(
     engine: Engine | None = None,
     services: AgentServices | None = None,
@@ -134,12 +192,13 @@ def create_app(
     app.include_router(admin.router)
     app.include_router(admin.public_router)
     app.add_api_route("/health", health, methods=["GET"])
-    app.add_api_route("/", landing, methods=["GET"], include_in_schema=False)
+    app.add_api_route("/", landing, methods=["GET", "HEAD"], include_in_schema=False)  # HEAD: uptime checkers
     if CONSOLE_DIST.is_dir():  # the merchant console (P9); its API calls need the admin password
         app.add_api_route("/console", lambda: RedirectResponse("/console/"), methods=["GET"], include_in_schema=False)
         app.mount("/console", StaticFiles(directory=CONSOLE_DIST, html=True), name="console")
     app.mount("/", mcp_mount)  # after the routes above, so /health and /sessions match first
     app.add_middleware(_RejectNulInUrl)
+    app.add_middleware(_SecurityHeaders)  # added last, so it wraps everything, the 400 above included
     return app
 
 
@@ -164,9 +223,12 @@ async def _sweep_forever(executor: Executor, interval: float) -> None:
     """Expire stale holds and recover stuck requests, every `interval` seconds (SPEC §6)."""
     while True:
         await asyncio.sleep(interval)
-        with contextlib.suppress(Exception):  # a failed sweep is retried next time
-            executor.expire_stale_holds()
-            executor.recover_stuck()
+        # Each sweep on its own: if one fails, the other still runs. A failure is retried next time.
+        for sweep in (executor.expire_stale_holds, executor.recover_stuck):
+            try:
+                sweep()
+            except Exception:
+                logger.warning("sweep %s failed; it runs again in %.0f s", sweep.__name__, interval, exc_info=True)
 
 
 def health() -> dict[str, str]:

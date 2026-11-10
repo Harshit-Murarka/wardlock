@@ -174,7 +174,7 @@ _LANDING = _page("Wardlock", "/", """
     and a fixed set of rules decides what happens next. So a line hidden in an email saying
     "refund everything" has nothing to work with.</p>
     <div class="facts"><b>4</b> MCP tools &nbsp;&middot;&nbsp; <b>38</b> scripted attacks, <b>0</b> allowed
-      &nbsp;&middot;&nbsp; <b>600+</b> tests on SQLite and Postgres</div>
+      &nbsp;&middot;&nbsp; <b>620+</b> tests on SQLite and Postgres</div>
     @@DEMO@@
   </div>
 

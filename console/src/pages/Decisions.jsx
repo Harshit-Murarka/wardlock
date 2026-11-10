@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import Grid, { Verdict } from "../Grid.jsx";
+import Grid, { Verdict, money } from "../Grid.jsx";
 import { when } from "../api.js";
 import { useData } from "../useData.js";
 
@@ -26,16 +26,18 @@ export default function Decisions({ onAuthError }) {
     },
     { field: "customer_id", headerName: "Customer", width: 130 },
     { field: "tool", headerName: "Tool", width: 170 },
-    { field: "amount", headerName: "Amount", width: 110, valueFormatter: (p) => (p.value ? `${p.value} ${p.data.currency}` : "") },
+    { field: "amount", headerName: "Amount", width: 120, cellClass: "num", valueFormatter: (p) => money(p.value, p.data.currency) },
     { field: "verdict", headerName: "Verdict", width: 110, cellRenderer: (p) => <Verdict value={p.value} /> },
     { field: "reason_codes", headerName: "Reason codes", flex: 1, valueFormatter: (p) => (p.value || []).join(", ") },
-    { field: "latency_ms", headerName: "Latency (ms)", width: 130 },
+    { field: "latency_ms", headerName: "Decided in (ms)", width: 150, cellClass: "num" },
   ];
 
   return (
     <section>
       <div className="toolbar">
         <h2>Decisions</h2>
+        <span className="hint">Every refund request an agent made, and what the rules said.</span>
+        <span className="spacer" />
         <label>
           Verdict
           <select value={verdict} onChange={(e) => setVerdict(e.target.value)}>

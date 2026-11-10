@@ -3,6 +3,7 @@
     python eval/run_eval.py                       # all configs, every ticket in eval/corpus/
     python eval/run_eval.py --configs C --limit 5 # a quick look
     python eval/run_eval.py --resume <run-name>   # continue a run that stopped (rate limits)
+    python eval/run_eval.py --report <run-name>   # rebuild RESULTS.md from a saved run (no LLM calls)
 
 Tickets come from eval/corpus/{attack,benign,edge}/*.json. Drafts live in eval/corpus_drafts/
 until a person reviews each one and moves it into eval/corpus/.
@@ -24,7 +25,8 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))  # so `python eval/run_eval.py` finds the packages from any folder
 
 from demo_agent.eval_harness import (  # noqa: E402
-    CONFIGS, compute_metrics, load_results, new_run_name, results_markdown, run_ticket, save_result,
+    CONFIGS, compute_metrics, finished_counts, load_results, new_run_name, results_markdown, run_ticket,
+    save_result,
 )
 from demo_agent.tickets import load_ticket  # noqa: E402
 from wardlock.config import get_settings  # noqa: E402
@@ -58,8 +60,12 @@ async def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--limit", type=int, help="at most this many tickets (for a quick look)")
     parser.add_argument("--resume", metavar="RUN_NAME", help="continue a saved run")
     parser.add_argument("--delay", type=float, default=0.0, help="seconds to wait between runs (free-tier limits)")
+    parser.add_argument("--report", metavar="RUN_NAME",
+                        help="only rebuild RESULTS.md from a saved run; calls no LLM and runs no ticket")
     parser.add_argument("--corpus", type=Path, default=CORPUS)
     args = parser.parse_args(argv)
+    if args.report:
+        return report(args.report, args.corpus)
 
     configs = [c.strip().upper() for c in args.configs.split(",") if c.strip()]
     if not configs or any(c not in CONFIGS for c in configs):
@@ -97,13 +103,32 @@ async def main(argv: list[str] | None = None) -> int:
     finally:
         await llm.aclose()
 
+    write_results(run_dir, tickets, model=settings.llm_model, when=now)
+    return 0
+
+
+def write_results(run_dir: Path, tickets: list[tuple[str, object]], *, model: str, when: datetime) -> None:
     results = load_results(run_dir)
     counts: dict[str, int] = {}
     for category, _ticket in tickets:
         counts[category] = counts.get(category, 0) + 1
-    RESULTS.write_text(results_markdown(compute_metrics(results), model=settings.llm_model, run_name=run_name,
-                                        when=now, corpus_counts=counts), encoding="utf-8")
+    RESULTS.write_text(results_markdown(compute_metrics(results), model=model, run_name=run_dir.name, when=when,
+                                        corpus_counts=counts, run_counts=finished_counts(results)),
+                       encoding="utf-8")
     print(f"Wrote {RESULTS.relative_to(ROOT)} from {len(results)} saved runs.")
+
+
+def report(run_name: str, corpus: Path) -> int:
+    """Rebuild RESULTS.md from the saved runs of `run_name`. Model and date come from the run itself:
+    its name is <yyyymmdd>-<model>-<id>, and the date shown is when its newest result was saved."""
+    run_dir = RUNS / run_name
+    saved = sorted(run_dir.glob("*/*.json")) if run_dir.is_dir() else []
+    if not saved:
+        print(f"No saved runs in {run_dir}", file=sys.stderr)
+        return 2
+    model = run_name.split("-", 1)[-1].rsplit("-", 1)[0]
+    newest = datetime.fromtimestamp(max(p.stat().st_mtime for p in saved), UTC)
+    write_results(run_dir, load_corpus(corpus, None), model=model, when=newest)
     return 0
 
 
