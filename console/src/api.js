@@ -42,13 +42,14 @@ export function isViewer() {
   return getUser() === VIEWER;
 }
 
-// What the sign-in screen may offer (no auth needed).
+// What the sign-in screen may offer (no auth needed). Returns null when the server didn't answer
+// properly, which happens for a minute while a sleeping free-plan instance wakes up.
 export async function consoleConfig() {
   try {
     const response = await fetch("/admin/public/config");
-    return response.ok ? await response.json() : {};
+    return response.ok ? await response.json() : null;
   } catch {
-    return {};
+    return null;
   }
 }
 

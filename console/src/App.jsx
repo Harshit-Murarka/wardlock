@@ -29,7 +29,17 @@ function Login({ onDone }) {
   const [demoOpen, setDemoOpen] = useState(false);
 
   useEffect(() => {
-    consoleConfig().then((config) => setDemoOpen(Boolean(config.public_readonly)));
+    // Keep asking until the server answers: on a cold start the page can load before the API
+    // is ready, and the read-only demo button must not silently go missing.
+    let stopped = false;
+    async function load(triesLeft) {
+      const config = await consoleConfig();
+      if (stopped) return;
+      if (config) setDemoOpen(Boolean(config.public_readonly));
+      else if (triesLeft > 0) setTimeout(() => load(triesLeft - 1), 3000);
+    }
+    load(40);
+    return () => { stopped = true; };
   }, []);
 
   async function signIn(password, user) {
