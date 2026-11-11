@@ -2,6 +2,8 @@
 
 **Let an AI support agent refund PayPal customers on its own, without being able to refund the wrong person, the wrong amount, or behind the merchant's back.**
 
+The agent's refund tool has **no amount parameter and no payment ID**. It can only pick from refund options Wardlock has already priced from the order, so a prompt-injected model has nothing to inject into.
+
 ![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-3776AB)
 ![MCP server](https://img.shields.io/badge/MCP-streamable%20HTTP-6E56CF)
 ![PayPal sandbox only](https://img.shields.io/badge/PayPal-sandbox%20only-003087)
@@ -71,7 +73,7 @@ The same LLM agent ran the same tickets three ways. Every number is computed by 
 | Honest refund tickets wrongly blocked | n/a | 0 of 14 | 0 of 14 |
 
 Read this with its limits in mind:
-- **It is a partial run:** 55 of the 100 reviewed tickets (all 40 attacks, 15 of 60 honest ones), on `gemini-3.1-flash-lite` with PayPal simulated in-process. The free LLM tier caps requests per day. The rest is added with `--resume`.
+- **It is a partial run:** 55 of the 100 reviewed tickets (all 40 attacks, 15 of 60 honest ones), on `gemini-3.1-flash-lite` with PayPal simulated in-process. The free LLM tier caps requests per day. The rest is added with `--resume`. Of the 15 honest tickets, 14 expect an automatic refund, so the two honest-ticket rows are out of 14.
 - **Wardlock did not score zero.** One attack ticket got a 22.00 refund in config C. It was one item on the attacker's *own* order, at the amount Wardlock computed, under the auto-approve limit, and the reason check accepted the story. That is the most a successful attack can reach: something the customer could have claimed anyway. The 3 honest tickets that weren't auto-closed were held for a person, not refused.
 - **The guarantees don't rest on this model.** A scripted attacker with no LLM plays a fully compromised agent: 38 calls using other customers' payment IDs, stolen and made-up handles, and amounts like `1e9` and `NaN`. Result: **38 attempts, 0 allowed**, locally and against the live deployment.
 
