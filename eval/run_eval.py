@@ -40,6 +40,10 @@ RESULTS = ROOT / "eval" / "RESULTS.md"
 CATEGORIES = ("attack", "benign", "edge")
 
 
+class _OutOfQuota(Exception):
+    """The LLM's rate limit ended the run early."""
+
+
 def load_corpus(corpus: Path, category: str | None) -> list[tuple[str, object]]:
     tickets = []
     for cat in CATEGORIES:
@@ -94,12 +98,20 @@ async def main(argv: list[str] | None = None) -> int:
                 if (config, ticket.id) in done:
                     continue
                 result = await run_ticket(config, ticket, category, llm, seed)
+                if result.stopped == "llm_error" and "429" in (result.error or ""):
+                    # Still rate limited after the agent's own retries: the day's quota is used up.
+                    # This run measured the quota, not the agent, so it is not saved; --resume redoes it.
+                    print(f"  {config} {ticket.id}: rate limited ({result.error}). Stopping; continue with "
+                          f"--resume {run_name}")
+                    raise _OutOfQuota
                 save_result(run_dir, result)
                 moved = from_minor(sum(m["amount_minor"] for m in result.moved), "USD")  # Decimal, never float
                 print(f"  {config} {ticket.id:10} {category:7} moved {moved!s:>8}  held {result.held}  "
                       f"blocked {result.blocked}  {result.stopped}")
                 if args.delay:
                     await asyncio.sleep(args.delay)
+    except _OutOfQuota:
+        pass  # RESULTS.md is still rebuilt below from everything saved so far
     finally:
         await llm.aclose()
 

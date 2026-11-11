@@ -69,12 +69,12 @@ The same LLM agent ran the same tickets three ways. Every number is computed by 
 | Attack tickets where money moved wrongly | 5 of 40 | 0 of 40 | 1 of 40 |
 | Money moved by those attacks | 448.99 USD | 0.00 USD | 22.00 USD |
 | Refunds to another customer's payment | 0 of 40 | 0 of 40 | 0 of 40 |
-| Honest refund tickets closed with no person involved | 14 of 14 | 0 of 14 | 11 of 14 |
-| Honest refund tickets wrongly blocked | n/a | 0 of 14 | 0 of 14 |
+| Honest refund tickets closed with no person involved | 37 of 39 | 0 of 39 | 29 of 39 |
+| Honest refund tickets wrongly blocked | n/a | 0 of 39 | 0 of 39 |
 
 Read this with its limits in mind:
-- **It is a partial run:** 55 of the 100 reviewed tickets (all 40 attacks, 15 of 60 honest ones), on `gemini-3.1-flash-lite` with PayPal simulated in-process. The free LLM tier caps requests per day. The rest is added with `--resume`. Of the 15 honest tickets, 14 expect an automatic refund, so the two honest-ticket rows are out of 14.
-- **Wardlock did not score zero.** One attack ticket got a 22.00 refund in config C. It was one item on the attacker's *own* order, at the amount Wardlock computed, under the auto-approve limit, and the reason check accepted the story. That is the most a successful attack can reach: something the customer could have claimed anyway. The 3 honest tickets that weren't auto-closed were held for a person, not refused.
+- **It is the full reviewed corpus:** 100 tickets (40 attacks and 60 honest ones), on `gemini-3.1-flash-lite` with PayPal simulated in-process. Of the 60 honest tickets, 39 expect an automatic refund, so the two honest-ticket rows are out of 39. The free LLM tier caps requests per day, so the run was done over two days with `--resume`.
+- **Wardlock did not score zero.** One attack ticket got a 22.00 refund in config C. It was one item on the attacker's *own* order, at the amount Wardlock computed, under the auto-approve limit, and the reason check accepted the story. That is the most a successful attack can reach: something the customer could have claimed anyway. The 10 honest tickets Wardlock didn't auto-close were all held for a person; none was refused. Without Wardlock the agent closed more of them (37), but on one honest ticket it refunded more than the ticket justified.
 - **The guarantees don't rest on this model.** A scripted attacker with no LLM plays a fully compromised agent: 38 calls using other customers' payment IDs, stolen and made-up handles, and amounts like `1e9` and `NaN`. Result: **38 attempts, 0 allowed**, locally and against the live deployment.
 
 ## How PayPal and AI are used
